@@ -1,0 +1,33 @@
+#!/bin/bash -e
+
+UPGRADE_DIR=/usr/local/harvester-upgrade/
+ISO_MNT=$UPGRADE_DIR/iso_mnt
+
+load_app_images()
+{
+  for image_archive in $ISO_MNT/bundle/harvester/images/*.tar.zst; do
+    if [ ! -e $image_archive ]; then
+      continue
+    fi
+
+    echo ""
+    echo "Loading $image_archive"
+    archive_name=$(basename -s .tar.zst $image_archive)
+    zstd -d $image_archive -o $IMAGE_WORKING_DIR/${archive_name}.tar
+    ctr -n k8s.io image import $IMAGE_WORKING_DIR/${archive_name}.tar
+    rm -f $IMAGE_WORKING_DIR/${archive_name}.tar
+  done
+}
+
+load_rancherd_images()
+{
+  cp $ISO_MNT/bundle/rancherd/images/*  /var/lib/rancher/agent/images/
+}
+
+IMAGE_WORKING_DIR=$(mktemp -d -p $UPGRADE_DIR)
+trap "rm -rf $IMAGE_WORKING_DIR" exit
+
+load_app_images
+load_rancherd_images
+
+echo "Done."

@@ -1,0 +1,1 @@
+This repository contains helper files to upgrade Harvester manually.
