@@ -1,0 +1,24 @@
+name: main-release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  REPO_NAME: upgrade-helpers
+
+jobs:
+  publish-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: create dist
+        run: |
+          mkdir -p $REPO_NAME
+          cp -r bin $REPO_NAME
+          tar zcvf ${REPO_NAME}.tar.gz $REPO_NAME
+      - uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ env.REPO_NAME }}.tar.gz
