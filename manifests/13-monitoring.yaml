@@ -1,0 +1,48 @@
+apiVersion: management.cattle.io/v3
+kind: ManagedChart
+metadata:
+  name: rancher-monitoring
+  namespace: fleet-local
+spec:
+  takeOwnership: true
+  chart: rancher-monitoring
+  releaseName: rancher-monitoring
+  version: 100.0.0+up16.6.0
+  defaultNamespace: cattle-monitoring-system
+  repoName: harvester-charts
+  targets:
+    - clusterName: local
+      clusterSelector:
+        matchExpressions:
+          - key: provisioning.cattle.io/unmanaged-system-agent
+            operator: DoesNotExist
+  values:
+    alertmanager:
+      enabled: false
+    grafana:
+      persistence:
+        enabled: true
+        size: "10"
+        storageClassName: longhorn
+        type: pvc
+        accessModes:
+          - ReadWriteOnce
+    prometheus:
+      prometheusSpec:
+        evaluationInterval: 1m
+        resources:
+          requests:
+            cpu: 500m
+        retention: 5d
+        retentionSize: 50GiB
+        scrapeInterval: 1m
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 50Gi
+              storageClassName: longhorn
+              volumeMode: Filesystem

@@ -1,0 +1,64 @@
+apiVersion: management.cattle.io/v3
+kind: ManagedChart
+metadata:
+  name: harvester
+  namespace: fleet-local
+spec:
+  takeOwnership: true
+  chart: harvester
+  releaseName: harvester
+  version: 1.0.0-rc1
+  defaultNamespace: harvester-system
+  repoName: harvester-charts
+  targets:
+    - clusterName: local
+      clusterSelector:
+        matchExpressions:
+          - key: provisioning.cattle.io/unmanaged-system-agent
+            operator: DoesNotExist
+  values:
+    service:
+      vip:
+        enabled: true
+        mode: "static"
+        ip: "10.10.0.100"
+        hwAddress: ""
+    kubevirt:
+      spec:
+        monitorAccount: rancher-monitoring-operator
+        monitorNamespace: cattle-monitoring-system
+    containers:
+      apiserver:
+        image:
+          imagePullPolicy: "IfNotPresent"
+        hciMode: true
+    multus:
+      enabled: false
+    longhorn:
+      enabled: true
+      defaultSettings:
+        taintToleration: "kubevirt.io/drain:NoSchedule"
+    harvester-network-controller:
+      enabled: true
+      vipEnabled: true
+      image:
+        pullPolicy: "IfNotPresent"
+    harvester-node-disk-manager:
+      enabled: true
+      image:
+        pullPolicy: "IfNotPresent"
+      labelFilter:
+        - "COS_*"
+        - "HARV_*"
+    rancherEmbedded: true
+    webhook:
+      image:
+        imagePullPolicy: "IfNotPresent"
+    harvester-load-balancer:
+      enabled: true
+    kube-vip:
+      enabled: true
+      config:
+        vip_interface: harvester-mgmt
+    kube-vip-cloud-provider:
+      enabled: true
