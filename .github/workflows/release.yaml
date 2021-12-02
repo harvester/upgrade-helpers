@@ -16,7 +16,7 @@ jobs:
       - name: create dist
         run: |
           mkdir -p $REPO_NAME
-          cp -r bin manifests $REPO_NAME
+          cp -r bin manifests grub-fix $REPO_NAME
           tar zcvf ${REPO_NAME}.tar.gz $REPO_NAME
       - uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
