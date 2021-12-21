@@ -4,8 +4,6 @@ metadata:
   name: harvester
   namespace: fleet-local
 spec:
-  # force is required for https://github.com/harvester/charts/pull/67
-  force: true
   takeOwnership: true
   chart: harvester
   releaseName: harvester
