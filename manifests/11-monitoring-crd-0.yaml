@@ -4,7 +4,6 @@ metadata:
   name: rancher-monitoring-crd
   namespace: fleet-local
 spec:
-  takeOwnership: true
   chart: rancher-monitoring-crd
   releaseName: rancher-monitoring-crd
   version: 100.0.0+up16.6.0

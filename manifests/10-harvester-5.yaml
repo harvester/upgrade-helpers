@@ -4,10 +4,9 @@ metadata:
   name: harvester
   namespace: fleet-local
 spec:
-  takeOwnership: true
   chart: harvester
   releaseName: harvester
-  version: 1.0.0-rc1
+  version: 1.0.0
   defaultNamespace: harvester-system
   repoName: harvester-charts
   targets:

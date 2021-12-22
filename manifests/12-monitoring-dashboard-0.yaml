@@ -1,0 +1,21 @@
+# need to pre-load those VM monitoring dashboards, required to create the `cattle-dashboards` namespace upfront
+# and keep those labels and annotations to avoid conflict from the operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cattle-dashboards
+  # both annotations and labels are required to be pre-defined here, this is because the cattle-dashboards ns will be created by
+  # the monitoring helmChart, but we want to pre-loaded and retain those Harvester dashboards
+  # NOTE: the "mcc-" prefix is added by Rancher when installing the chart using ManagedChart.
+  annotations:
+    helm.sh/resource-policy: keep
+    meta.helm.sh/release-name: rancher-monitoring
+    meta.helm.sh/release-namespace: cattle-monitoring-system
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: rancher-monitoring
+    app.kubernetes.io/part-of: rancher-monitoring
+    kubernetes.io/metadata.name: cattle-dashboards
+    release: rancher-monitoring
+    name: cattle-dashboards
+    heritage: Helm

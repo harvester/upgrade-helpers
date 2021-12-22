@@ -1,0 +1,5 @@
+# create the cattle-monitoring-system namespace and SA upfront, so that kubevirt monitoring-operator integration can find it
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cattle-monitoring-system
