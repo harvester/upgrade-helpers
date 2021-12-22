@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: httpd
-        image: rancher/harvester-cluster-repo:v1.0.0-rc1
+        image: rancher/harvester-cluster-repo:
         ports:
         - containerPort: 80
 ---
