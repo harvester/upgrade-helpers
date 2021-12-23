@@ -11,7 +11,7 @@ rm -f /var/lib/rancher/rke2/server/static/charts/rancher-monitoring-*.tgz
 echo "Old manifests are deleted."
 
 # Enable RKE2 ingress
-if [ /etc/rancher/rke2/config.yaml.d/90-harvester-server.yaml ]; then
+if [ -e /etc/rancher/rke2/config.yaml.d/90-harvester-server.yaml ]; then
   /usr/local/harvester-upgrade/upgrade-helpers/bin/yq -e e 'del(.disable)' /etc/rancher/rke2/config.yaml.d/90-harvester-server.yaml -i
 fi
 

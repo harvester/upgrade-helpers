@@ -79,3 +79,5 @@ network_controller_fix || true
 remove_user_attributes || true
 upgrade_harvester
 upgrade_monitoring
+
+echo "Upgrade is done."
