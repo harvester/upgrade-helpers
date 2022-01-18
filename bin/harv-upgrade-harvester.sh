@@ -21,6 +21,10 @@ get_managed_chart_ready() {
   kubectl get ManagedChart $1 -n fleet-local -o yaml | yq -e e '.status.summary.ready' -
 }
 
+restart_kube_vip_pods() {
+  kubectl rollout restart daemonset kube-vip -n harvester-system
+}
+
 wait_managed_chart_modified() {
   until [ "$(get_managed_chart_modified $1)" = "1" ]
   do
@@ -51,13 +55,13 @@ upgrade_harvester() {
   yq -e e '.spec.version = strenv(HARVESTER_CHART_VERSION)' /usr/local/harvester-upgrade/upgrade-helpers/manifests/10-harvester-5.yaml -i
   VIP_SPEC="$VIP_SPEC" yq -e e '.spec.values.service.vip = env(VIP_SPEC)' /usr/local/harvester-upgrade/upgrade-helpers/manifests/10-harvester-5.yaml -i
   kubectl apply -f /usr/local/harvester-upgrade/upgrade-helpers/manifests/10-harvester-5.yaml
-  wait_managed_chart_modified "harvester" 
+  wait_managed_chart_modified "harvester"
   kubectl -n harvester-system rollout status -w deployment/harvester
   kubectl -n harvester-system rollout status -w deployment/harvester-webhook
 
   # harvester-crd mc
   kubectl apply -f /usr/local/harvester-upgrade/upgrade-helpers/manifests/10-harvester-6.yaml
-  wait_managed_chart_ready "harvester-crd" 
+  wait_managed_chart_ready "harvester-crd"
 }
 
 upgrade_monitoring() {
@@ -79,5 +83,6 @@ network_controller_fix || true
 remove_user_attributes || true
 upgrade_harvester
 upgrade_monitoring
+restart_kube_vip_pods
 
 echo "Upgrade is done."
