@@ -65,6 +65,10 @@ check_nodes()
     local failed="false"
     echo ">>> Check all nodes are ready..."
 
+    # Use a file to store the node state becuase we can't set the global variable inside the piped scope
+    # The file is removed in the piped scope if there are not-ready nodes.
+    node_ready_state=$(mktemp)
+
     # nodes should not be cordoned
     nodes=$(kubectl get nodes -o yaml)
     unschedulable=$(echo "$nodes" | yq '.items | any_c(.spec.unschedulable == true)')
@@ -72,7 +76,7 @@ check_nodes()
     if [ "$unschedulable" = "true" ]; then
         echo "There are unschedulable nodes:"
         echo "$nodes" | yq '.items[] | select(.spec.unschedulable == true)  | .metadata.name'
-        failed="true"
+        rm -f $node_ready_state
     fi
 
     # nodes should be ready
@@ -82,14 +86,16 @@ check_nodes()
 
             if [ "$node_ready" = "false" ]; then
                 echo "Node $node_name is not ready!"
-                failed="true"
+                rm -f $node_ready_state
             fi
         done
 
-    if [ "$failed" = "true" ]; then
-        record_fail
-    else
+    if [ -e $node_ready_state ]; then
         echo "All nodes are ready."
+        rm $node_ready_state
+    else
+        echo "There are non-ready nodes."
+        record_fail
     fi
 }
 
@@ -113,6 +119,10 @@ check_machines()
     local failed="false"
     echo ">>> Check the CAPI machines are running..."
 
+    # Use a file to store the machine state becuase we can't set the global variable inside the piped scope
+    # The file is removed in the piped scope if there are not-ready machines.
+    machine_ready_state=$(mktemp)
+
     # all machines need to be provisioned
     kubectl get machines.cluster.x-k8s.io -n fleet-local -o yaml | yq '.items[].metadata.name' |
         while read -r machine_name; do
@@ -120,14 +130,16 @@ check_machines()
 
             if [ "$machine_phase" != "Running" ]; then
                 echo "CAPI machine $machine_name phase is not Running ($machine_phase)."
-                failed="true"
+                rm -f $machine_ready_state
             fi
         done
 
-    if [ "$failed" = "true" ]; then
-        record_fail
-    else
+    if [ -e $machine_ready_state  ]; then
         echo "The CAPI machines are provisioned."
+        rm $machine_ready_state
+    else
+        echo "There are non-ready CAPI machines."
+        record_fail
     fi
 }
 
@@ -135,25 +147,71 @@ check_volumes()
 {
     echo ">>> Check Longhorn volumes..."
 
-    volumes=$(kubectl get volumes.longhorn.io -A -o yaml)
+    node_count=$(kubectl get nodes -o yaml | yq '.items | length')
 
-    # all volumes should be healthy
-    degraded=$(echo "$volumes" | yq '.items | any_c(.status.state == "attached" and .status.robustness != "healthy")')
-
-    if [ "$degraded" = "false" ]; then
-        echo "All volumes are healthy."
+    if [ $node_count -eq 1 ]; then
+        echo "Skip checking for single node cluster."
         return
     fi
 
-    echo "There are non-healthy Longhorn volumes:"
-    echo "$volumes" | yq '.items[] | select(.status.state == "attached" and .status.robustness != "healthy") | .metadata.namespace + "/" + .metadata.name'
-    record_fail
+    # Use a file to store the healthy state becuase we can't set the global variable inside the piped scope
+    # The file is removed in the piped scope if there are any degraded volumes.
+    healthy_state=$(mktemp)
+
+    # For each running engine and its volume
+    kubectl get engines.longhorn.io -n longhorn-system -o json |
+        jq -r '.items | map(select(.status.currentState == "running")) | map(.metadata.name + " " + .metadata.labels.longhornvolume) | .[]' | {
+            while read -r lh_engine lh_volume; do
+                echo checking running engine "${lh_engine}..."
+
+                if [ $node_count -gt 2 ];then
+                    robustness=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o jsonpath='{.status.robustness}')
+                    if [ "$robustness" = "healthy" ]; then
+                        echo "Volume $lh_volume is healthy."
+                    else
+                        echo "Volume $lh_volume is degraded."
+                        rm -f $healthy_state
+                    fi
+                else
+                    # two node situation, make sure maximum two replicas are healthy
+                    expected_replicas=2
+
+                    # replica 1 case
+                    volume_replicas=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o jsonpath='{.spec.numberOfReplicas}')
+                    if [ $volume_replicas -eq 1 ]; then
+                        expected_replicas=1
+                    fi
+
+                    ready_replicas=$(kubectl get engines.longhorn.io/$lh_engine -n longhorn-system -o json |
+                                    jq -r '.status.replicaModeMap | to_entries | map(select(.value == "RW")) | length')
+                    if [ $ready_replicas -ge $expected_replicas ]; then
+                        echo "Volume $lh_volume is healthy."
+                    else
+                        echo "Volume $lh_volume is degraded."
+                        rm -f $healthy_state
+                    fi
+                fi
+                sleep 0.5
+            done
+        }
+
+    if [ -e $healthy_state ]; then
+        echo "All volumes are healthy."
+        rm $healthy_state
+    else
+        echo "There are degraded volumes."
+        record_fail
+    fi
 }
 
 # https://github.com/harvester/harvester/issues/3648
 check_attached_volumes()
 {
     echo ">>> Check stale Longhorn volumes..."
+
+    # Use a file to store the clean state becuase we can't set the global variable inside the piped scope
+    # The file is removed in the piped scope if any volume is stale.
+    clean_state=$(mktemp)
 
     volumes=$(kubectl get volumes.longhorn.io -A -o yaml)
     # for each attached volume
@@ -165,7 +223,8 @@ check_attached_volumes()
             workloads=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | length')
             if [ "$workloads" = "0" ]; then
                 echo "Volume $vol_namespace/$vol_name is attached but has no workload."
-                has_stale="true"
+                rm -f $clean_state
+                continue
             fi
 
             # check .status.kubernetesStatus.workloadStatus has non-running workload. e.g.,
@@ -177,19 +236,19 @@ check_attached_volumes()
             is_stale=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus != "Running")')
             if [ "$is_stale" = "true" ]; then
                 echo "Volume $vol_namespace/$vol_name is attached but its workload is not running." 
-                has_stale="true"
+                rm -f $clean_state
             fi
-
-            sleep 1
+            sleep 0.5
         done
-
-        if [ -n "$has_stale" ]; then
-            record_fail
-            return
-        fi
     }
 
-    echo "There is no stale Longhorn volume."
+    if [ -e $clean_state ]; then
+        echo "There is no stale Longhorn volume."
+        rm $clean_state
+    else
+        echo "There are stale volumes."
+        record_fail
+    fi
 }
 
 check_error_pods()
