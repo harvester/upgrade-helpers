@@ -117,6 +117,20 @@ check_cluster()
 check_machines()
 {
     local failed="false"
+    echo ">>> Check the CAPI machines count..."
+
+    # machine count should be equal to node counts
+    machine_count=$(kubectl get machines.cluster.x-k8s.io -n fleet-local -o yaml | yq '.items | length')
+    node_count=$(kubectl get nodes -o yaml | yq '.items | length')
+    if [ $machine_count -ne $node_count ]; then
+        echo "CAPI machine count is not equal to node count. There are orphan machines."
+        kubectl get nodes
+        kubectl get machines.cluster.x-k8s.io -n fleet-local
+        record_fail
+    else
+        echo "CAPI machine count is equal to node count."
+    fi
+
     echo ">>> Check the CAPI machines are running..."
 
     # Use a file to store the machine state becuase we can't set the global variable inside the piped scope
