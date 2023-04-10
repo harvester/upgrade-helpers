@@ -14,7 +14,7 @@ We build a script to help check if a cluster can do a smooth upgrade.
 1. Execute this command to check:
 
     ```
-    curl -sLf https://raw.githubusercontent.com/harvester/upgrade-helpers/pre-check/v1.0.3/check.sh -o check.sh
+    curl -sLf https://raw.githubusercontent.com/harvester/upgrade-helpers/main/pre-check/v1.0.3/check.sh -o check.sh
     chmod +x check.sh
     ./check.sh
     ```
