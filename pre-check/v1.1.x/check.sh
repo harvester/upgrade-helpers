@@ -42,7 +42,6 @@ EOF
 
     if ! diff <(yq -P 'sort_keys(..)' $current_summary) <(yq -P 'sort_keys(..)' $expected_summary); then
         echo "Harvester bundle is not ready!"
-        cat $current_summary
         record_fail
         return
     fi
@@ -66,6 +65,14 @@ check_nodes()
     if [ "$unschedulable" = "true" ]; then
         echo "There are unschedulable nodes:"
         echo "$nodes" | yq '.items[] | select(.spec.unschedulable == true)  | .metadata.name'
+        rm -f $node_ready_state
+    fi
+
+    # nodes should not be tainted
+    tainted=$(echo "$nodes" | yq '.items | any_c(.spec.taints != null)')
+    if [ "$tainted" = "true" ]; then
+        echo "There are tainted nodes:"
+        echo "$nodes" | yq '.items[] | select(.spec.taints != null)  | .metadata.name'
         rm -f $node_ready_state
     fi
 
