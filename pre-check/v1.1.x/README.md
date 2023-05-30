@@ -1,17 +1,17 @@
 # Pre-check scripts before an upgrade
 
-We build a script to help check if a cluster can do a smooth upgrade.
+We have developed a script to assist in verifying if a cluster is eligible for a smooth upgrade. Please follow the steps below to utilize the script:
 
 ## Usage
 
-1. Log in to a control plane node and become root:
+1. Log in to a control plane node and switch to the root user:
 
     ```
     ssh rancher@<ip>
     sudo -i
     ```
 
-1. Execute this command to check:
+1. Execute the following command to initiate the check:
 
     ```
     curl -sLf https://raw.githubusercontent.com/harvester/upgrade-helpers/main/pre-check/v1.1.x/check.sh -o check.sh
@@ -19,7 +19,7 @@ We build a script to help check if a cluster can do a smooth upgrade.
     ./check.sh
     ```
 
-    The check script should have a output like:
+    The check script will provide an output similar to the following:
 
     ```
     >>> Check all bundles ready...
@@ -45,12 +45,8 @@ We build a script to help check if a cluster can do a smooth upgrade.
     All checks pass.
     ```
 
-    If there are any failing check, please do not proceed the upgrade.
+    If any checks fail, please refrain from proceeding with the upgrade.
 
-
-## Other checks
-
-These are some additional checks to do.
 
 ### Check time is in sync on every node.
 
