@@ -2,6 +2,9 @@
 
 set -e
 
+CRICTL="/var/lib/rancher/rke2/bin/crictl"
+CONTAINERD_SOCK="unix:///var/run/k3s/containerd/containerd.sock"
+
 TMP_DIR=$(mktemp -d)
 
 trap cleanup EXIT
@@ -57,6 +60,12 @@ main() {
     exit 1
   fi
 
+  # Root permission required to execute crictl
+  if [ "$EUID" -ne 0 ]; then
+    echo 'Please run as root.'
+    exit 1
+  fi
+
   collect_image_list "$@"
 
   echo 'Current disk usage of /usr/local: '
@@ -64,12 +73,12 @@ main() {
   printf 'Delete the images listed above (y/n)? '
   read -r answer
   if [ "$answer" != "${answer#[Yy]}" ]; then
-    if ! command -v crictl > /dev/null 2>&1; then
-      echo "crictl could not be found."
+    if [ ! -x "$CRICTL" ]; then
+      echo "crictl executable could not be found."
       exit 1
     fi
 
-    crictl rmi $(cat "$TMP_DIR"/image_list_diff.txt) || true
+    IMAGE_SERVICE_ENDPOINT="$CONTAINERD_SOCK" "$CRICTL" rmi $(cat "$TMP_DIR"/image_list_diff.txt) || true
     echo 'Disk usage of /usr/local after removing the images: '
     df -h /usr/local
   else
