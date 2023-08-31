@@ -176,12 +176,20 @@ check_volumes()
                 echo checking running engine "${lh_engine}..."
 
                 if [ $node_count -gt 2 ];then
-                    robustness=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o jsonpath='{.status.robustness}')
-                    if [ "$robustness" = "healthy" ]; then
-                        echo "Volume $lh_volume is healthy."
-                    else
-                        echo "Volume $lh_volume is degraded."
+                    volume_json=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o json)
+                    # single-replica volumes should be handled exclusively
+                    volume_replicas=$(echo $volume_json | jq -r '.spec.numberOfReplicas')
+                    if [ $volume_replicas -eq 1 ]; then
+                        echo "Volume $lh_volume is a single-replica volume. Please consider shutting down the corresponding workload or adjusting its replica count before upgrading."
                         rm -f $healthy_state
+                    else
+                        robustness=$(echo $volume_json | jq -r '.status.robustness')
+                        if [ "$robustness" = "healthy" ]; then
+                            echo "Volume $lh_volume is healthy."
+                        else
+                            echo "Volume $lh_volume is degraded."
+                            rm -f $healthy_state
+                        fi
                     fi
                 else
                     # two node situation, make sure maximum two replicas are healthy
@@ -210,7 +218,7 @@ check_volumes()
         echo "All volumes are healthy."
         rm $healthy_state
     else
-        echo "There are degraded volumes."
+        echo "There are volumes that need your attention!"
         record_fail
     fi
 }
