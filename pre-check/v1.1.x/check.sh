@@ -305,6 +305,34 @@ check_free_space()
     record_fail
 }
 
+check_certificate()
+{
+    echo ">>> Check certificates..."
+
+    vip=$(kubectl -n kube-system get services ingress-expose -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    if [ -z "$vip" ]; then
+        echo "VIP not available."
+        record_fail
+    else
+        echo "VIP address: $vip"
+    fi
+
+    cert=$(kubectl get settings.harvesterhci.io ssl-certificates -o jsonpath='{.value}' | jq -r '.publicCertificate')
+    if [ -z "$cert" ]; then
+        echo "ssl-certificates is not set."
+    else
+        echo "Checking if the user-provided certificate contains any Subject Alternative Names (SANs)..."
+        SAN=$(echo "$cert" | openssl x509 -inform PEM -noout -ext subjectAltName | grep -oP '(?<=DNS:|IP Address:)[^,]+' || true)
+        if echo "$SAN" | grep -q "$vip"; then
+            echo "The certificate contains the VIP address $vip"
+        else
+            echo "The SAN extension of the certificate does not contain the VIP address $vip"
+            echo "For more information, please visit: https://github.com/harvester/harvester/issues/4519"
+            record_fail
+        fi
+    fi
+}
+
 check_bundles
 check_harvester_bundle
 check_nodes
@@ -314,6 +342,7 @@ check_volumes
 check_attached_volumes
 check_error_pods
 check_free_space
+check_certificate
 
 if [ $check_failed -gt 0 ]; then
     echo ""
