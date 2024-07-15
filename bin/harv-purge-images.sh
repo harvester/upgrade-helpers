@@ -31,11 +31,23 @@ collect_image_list() {
   mkdir "$TMP_DIR"/"$prev_ver"
   mkdir "$TMP_DIR"/"$cur_ver"
   
-  echo "Fetching $prev_ver image lists..."
-  curl -fL https://releases.rancher.com/harvester/"$prev_ver"/image-lists.tar.gz -o "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz
+  if [ -e image-lists-$prev_ver.tar.gz ]
+  then
+    echo "Using local $prev_ver image lists..."
+    cp image-lists-$prev_ver.tar.gz "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz
+  else
+    echo "Fetching $prev_ver image lists..."
+    curl -fL https://releases.rancher.com/harvester/"$prev_ver"/image-lists.tar.gz -o "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz
+  fi
   tar -zxvf "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz -C "$TMP_DIR"/"$prev_ver"/
-  echo "Fetching $cur_ver image lists..."
-  curl -fL https://releases.rancher.com/harvester/"$cur_ver"/image-lists.tar.gz -o "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz
+  if [ -e image-lists-$cur_ver.tar.gz ]
+  then
+    echo "Using local $cur_ver image lists..."
+    cp image-lists-$cur_ver.tar.gz "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz
+  else
+    echo "Fetching $cur_ver image lists..."
+    curl -fL https://releases.rancher.com/harvester/"$cur_ver"/image-lists.tar.gz -o "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz
+  fi
   tar -zxvf "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz -C "$TMP_DIR"/"$cur_ver"/
   
   prev_image_list="$TMP_DIR"/prev_image_list.txt
