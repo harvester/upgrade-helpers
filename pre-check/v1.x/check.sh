@@ -1,15 +1,16 @@
 #!/bin/bash -e
 
 usage() {
- echo "Usage: $0 [OPTIONS]"
+ echo "Usage: $0 -hvy -l path/to/file.log"
  echo "Options:"
  echo " -h,	Display this help message"
  echo " -v,	Enable verbose mode"
- echo " -o,	Specify path to a log file."
+ echo " -l,	Specify path to a log file."
+ echo " -y,     Assume 'y' to all answers and continue without asking."
 }
 
 
-while getopts "hvl:k:" flag; do
+while getopts "hvyl:" flag; do
  case $flag in
    h) # Handle the -h flag
    # Display script help information
@@ -23,6 +24,10 @@ while getopts "hvl:k:" flag; do
    # Enable verbose mode
    verbose=true
    ;;
+   y) # Handle the -y flag
+   # Assumes a 'y' answer to all prompts to continue. 
+   answer=true
+   ;;
    \?)
    # Handle invalid options
    usage
@@ -34,23 +39,22 @@ done
 #Set failure counter to 0. 
 check_failed=0
 
-
 record_fail()
 {
     check_failed=$((check_failed+1))
     failed_check_names=$((failed_check_names+"$1 "))
     log_info "${1} Test: Failed"
-    echo -e "==============================\n\n"
+    echo -e "\n==============================\n"
 }
 
 #Log verbose messages, but don't echo them unless the -v flag is used.
 log_verbose()
 {
     if [ $log_file ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] ${1}" >> "$log_file"
+        echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ${1}" >> "$log_file"
     fi
     if [ "$verbose" = true ]; then 
-        echo "${1}"
+        echo -e "${1}"
     fi
 }
 
@@ -58,9 +62,9 @@ log_verbose()
 log_info()
 {
     if [ $log_file ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] ${1}" >> "$log_file"
+        echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ${1}" >> "$log_file"
     fi
-    echo "${1}"
+    echo -e "${1}"
 }
 
 
@@ -77,7 +81,7 @@ check_bundles()
     if [ "$pending" = "false" ]; then
       log_verbose "All Helm bundles are ready."
       log_info "Helm-Bundles Test: Pass"
-      echo -e "==============================\n"
+      echo -e "\n==============================\n"
       return
     fi
     # These are failures so send them to the info log
@@ -107,7 +111,7 @@ EOF
     fi
     log_verbose "All Harvester bundles are ready."
     log_info "Harvester-Bundles Test: Pass"
-    echo -e "==============================\n"
+    echo -e "\n==============================\n"
 }
 
 check_nodes()
@@ -150,7 +154,7 @@ check_nodes()
     if [ -e $node_ready_state ]; then
         log_verbose "All nodes are ready."
         log_info "Node-Status Test: Pass"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
         rm $node_ready_state
     else
         log_verbose "There are non-ready nodes."
@@ -172,7 +176,7 @@ check_cluster()
 
     log_verbose "The CAPI cluster is provisioned."
     log_info "CAPI-Cluster-State Test: Pass"
-    echo -e "==============================\n"
+    echo -e "\n==============================\n"
 }
 
 check_machines()
@@ -184,14 +188,15 @@ check_machines()
     machine_count=$(kubectl get machines.cluster.x-k8s.io -n fleet-local -o yaml | yq '.items | length')
     node_count=$(kubectl get nodes -o yaml | yq '.items | length')
     if [ $machine_count -ne $node_count ]; then
-        log_info "CAPI machine count (${machine_count}) is not equal to node count (${node_count}). There are orphan machines:"
-        log_info "$(kubectl get nodes)"
-        log_info "$(kubectl get machines.cluster.x-k8s.io -n fleet-local)"
+        log_info "CAPI machine count (${machine_count}) is not equal to node count (${node_count}). Check the log or verbose mode (-l or -v) for more details. "
+        log_verbose "There are orphan machines:"
+        log_verbose "$(kubectl get nodes)"
+        log_verbose "$(kubectl get machines.cluster.x-k8s.io -n fleet-local)"
         record_fail "CAPI-Machine-Count"
     else
         log_verbose "CAPI machine count is equal to node count."
         log_info "CAPI-Machine-Count Test: Pass"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
     fi
 
     log_info "Starting CAPI Machine State check..."
@@ -206,7 +211,7 @@ check_machines()
             machine_phase=$(kubectl get machines.cluster.x-k8s.io/$machine_name -n fleet-local -o yaml | yq '.status.phase')
 
             if [ "$machine_phase" != "Running" ]; then
-                log_info "CAPI machine $machine_name phase is not Running but is: ($machine_phase)."
+                log_info "CAPI machine $machine_name phase is not 'Running' but is: $machine_phase."
                 rm -f $machine_ready_state
             fi
         done
@@ -230,7 +235,7 @@ check_volumes()
     if [ $node_count -eq 1 ]; then
         log_info "Skip checking for single node cluster."
         log_info "Longhorn-Volume-Health-Status Test: Skipped"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
         return
     fi
 
@@ -287,7 +292,7 @@ check_volumes()
     if [ -e $healthy_state ]; then
         log_verbose "All volumes are healthy."
         log_info "Longhorn-Volume-Health-Status Test: Pass"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
         rm $healthy_state
     else
         log_info "There are volumes that need your attention!"
@@ -337,9 +342,9 @@ check_attached_volumes()
         log_verbose "There is no stale Longhorn volume."
         rm $clean_state
         log_info "Stale-Longhorn-Volumes Test: Pass"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
     else
-        log_st "There are stale volumes."
+        log_verbose "There are stale volumes."
         record_fail "Stale-Longhorn-Volumes"
     fi
 }
@@ -352,9 +357,9 @@ check_error_pods()
     no_ok=$(echo "$pods" | yq '.items | any_c(.status.phase != "Running" and .status.phase != "Succeeded")')
 
     if [ "$no_ok" = "false" ]; then
-        logging_verbose "All pods are OK."
+        log_verbose "All pods are OK."
         log_info "Pod-Status Test: Pass"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
         return
     fi
 
@@ -374,7 +379,7 @@ check_free_space()
     if [ "$length" == "0" ]; then
         log_verbose "All nodes have more than 30GB free space."
         log_info "Node-Free-Space Test: Pass"
-        echo -e "==============================\n"
+        echo -e "\n==============================\n"
         return
     fi
 
@@ -387,11 +392,48 @@ check_free_space()
 check_log_file()
 {
     if [ -e $log_file ]; then
-        read -r -p "The file ${log_file} exists. Are you sure that you want to overwrite/clear the contents of that file? [Y/N] " response
+        # Just clear the file if run with -y
+        if [ "$answer" = true ]; then
+            echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] Cleared Previous Log File" >> "$log_file"
+            return
+        fi
+        read -r -p "The file $log_file exists. Are you sure that you want to overwrite/clear the contents of that file? [Y/N]" response
         if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-            echo '' > $log_file
+            echo "Cleared Stale Log File" > $log_file
+            return
         else
             echo -e "Choose a different filename for the log flag (-l) or move/rename the file and run the script again. \nExiting."
+            exit 1
+        fi
+    fi
+}
+
+# Are we running the script on a control-plane node?
+check_host()
+{
+    log_info "Starting Host check... "
+    cp_nodes=$(kubectl get nodes |grep control-plane |awk '{ print $1 }')
+    log_verbose "The hostname is: $(hostname)"
+    log_verbose "Controlplane nodes are:\n${cp_nodes}"
+    log_verbose "The OS release is: $(awk -F= '$1=="PRETTY_NAME" { print $2 ;}' /etc/os-release)"
+    # Just continue if -y was supplied
+    if [  "$answer" = true ]; then
+        log_info "Host Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+    # Ask the user if they want to contine if the host isn't one of the cp nodes. 
+    if [[ $cp_nodes == *"$(hostname)"* ]]; then
+        log_info "Host Test: Passed"    
+    else
+        log_info "This script is intended to be run from one of the Harvester cluster's Control Plane nodes."
+        log_info "It seems like you're running this script from $(hostname) and not one of the following nodes:\n${cp_nodes}"
+        read -r -p "Do you want to contiue running this script even though it seems like you're not on a node? [Y/N] " response
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            log_info "Host Test: Skipped"
+            echo -e "\n==============================\n"
+        else
+            log_info "Run this script again from one of the nodes listed above."
             exit 1
         fi
     fi
@@ -400,16 +442,8 @@ check_log_file()
 check_log_file
 
 log_verbose "Script has started"
-
-log_info "This script is intended to be run from one of the Harvester cluster's Control Plane nodes."
-log_info "You should stop the script (Ctrl+C) and run it from there if this is not the case."
-# Pause for humans.
-sleep 2
-
-log_verbose "The OS release is: $(awk -F= '$1=="PRETTY_NAME" { print $2 ;}' /etc/os-release)"
-
-exit 0
-
+echo -e "==============================\n"
+check_host
 check_bundles
 check_harvester_bundle
 check_nodes
