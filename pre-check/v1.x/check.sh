@@ -464,7 +464,7 @@ check_error_pods
 check_free_space
 
 if [ $check_failed -gt 0 ]; then
-    log_info "WARN: There are $check_failed failing checks: ${failed_check_names}"
+    log_info "WARN: There are $check_failed failing checks:${failed_check_names}"
     exit 1
 else
     log_info "All checks have pass."
