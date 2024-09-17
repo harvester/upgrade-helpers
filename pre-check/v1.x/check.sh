@@ -386,7 +386,7 @@ check_free_space()
 #If a log file exists ask users if they want to clear it, or exit. 
 check_log_file()
 {
-    if [ $log_file ]; then
+    if [ -e $log_file ]; then
         read -r -p "The file ${log_file} exists. Are you sure that you want to overwrite/clear the contents of that file? [Y/N] " response
         if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             echo '' > $log_file
