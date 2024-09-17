@@ -334,7 +334,7 @@ check_attached_volumes()
             is_stale=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus != "Running")')
             if [ "$is_stale" = "true" ]; then
                 log_info "Volume ${vol_name} is attached, but one or more of its workloads is not running." 
-                log_verbose "$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus')"
+                log_verbose "Details of the workloads:\n$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus')"
                 rm -f $clean_state
             fi
             sleep 0.5
