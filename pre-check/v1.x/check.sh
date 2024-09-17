@@ -316,12 +316,12 @@ check_attached_volumes()
     echo "$volumes" | yq '.items[] | select(.status.state == "attached") | .metadata.namespace + " " + .metadata.name' | {
         while read -r vol_namespace vol_name; do
             log_verbose "Checking volume: ${vol_namespace}/${vol_name}"
-
             # check .status.kubernetesStatus.workloadStatus is nil
             workloads=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | length')
             if [ "$workloads" = "0" ]; then
-                log_info "Volume $vol_namespace/$vol_name is attached but has no workload."
+                log_info "Volume $vol_name is attached but has no workload."
                 rm -f $clean_state
+                sleep 0.5
                 continue
             fi
 
@@ -333,15 +333,15 @@ check_attached_volumes()
             #     workloadType: VirtualMachineInstance
             is_stale=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus != "Running")')
             if [ "$is_stale" = "true" ]; then
-                log_info "Volume ${vol_namespace}/${vol_name} is attached but its workload is not running." 
+                log_info "Volume ${vol_name} is attached, but one or more of its workloads is not running." 
+                log_verbose "${workloads}"
                 rm -f $clean_state
             fi
             sleep 0.5
         done
     }
-
     if [ -e $clean_state ]; then
-        log_verbose "There is no stale Longhorn volume."
+        log_verbose "There are no stale Longhorn volumes."
         rm $clean_state
         log_info "Stale-Longhorn-Volumes Test: Pass"
         echo -e "\n==============================\n"
