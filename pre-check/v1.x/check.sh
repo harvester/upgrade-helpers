@@ -431,9 +431,10 @@ check_host()
         echo -e "\n==============================\n"
         return
     fi
-    # Ask the user if they want to contine if the host isn't one of the cp nodes. 
+    # Ask the user if they want to continue if the host isn't one of the cp nodes. 
     if [[ $cp_nodes == *"$(hostname)"* ]]; then
-        log_info "Host Test: Passed"    
+        log_info "Host Test: Pass"
+            echo -e "\n==============================\n"
     else
         log_info "This script is intended to be run from one of the Harvester cluster's Control Plane nodes."
         log_info "It seems like you're running this script from $(hostname) and not one of the following nodes:\n${cp_nodes}"
