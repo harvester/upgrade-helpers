@@ -38,9 +38,11 @@ done
 #Set failure counter to 0. 
 check_failed=0
 
+
 record_fail()
 {
     check_failed=$((check_failed+1))
+    failed_check_names=$((failed_check_names+"$1 "))
 }
 
 
@@ -60,7 +62,7 @@ check_bundles()
 
     echo "There are non-ready Helm bundles:"
     echo "$bundles" | yq '.items[] | select(.spec.helm != null and .status.summary.ready == 0) | .metadata.namespace + "/" + .metadata.name'
-    record_fail
+    record_fail "Helm-Bundles"
 }
 
 check_harvester_bundle()
@@ -78,7 +80,7 @@ EOF
 
     if ! diff <(yq -P 'sort_keys(..)' $current_summary) <(yq -P 'sort_keys(..)' $expected_summary); then
         echo "Harvester bundle is not ready!"
-        record_fail
+        record_fail "Harvester-Bundles"
         return
     fi
 
@@ -128,7 +130,7 @@ check_nodes()
         rm $node_ready_state
     else
         echo "There are non-ready nodes."
-        record_fail
+        record_fail "Node-Status"
     fi
 }
 
@@ -140,7 +142,7 @@ check_cluster()
     # cluster should be in provisioned
     if [ "$cluster_phase" != "Provisioned" ]; then
         echo "Cluster is not provisioned ($cluster_phase)"
-        record_fail
+        record_fail "CAPI-Cluster-State"
         return
     fi
 
@@ -159,7 +161,7 @@ check_machines()
         echo "CAPI machine count is not equal to node count. There are orphan machines."
         kubectl get nodes
         kubectl get machines.cluster.x-k8s.io -n fleet-local
-        record_fail
+        record_fail "CAPI-Machine-Count"
     else
         echo "CAPI machine count is equal to node count."
     fi
@@ -186,7 +188,7 @@ check_machines()
         rm $machine_ready_state
     else
         echo "There are non-ready CAPI machines."
-        record_fail
+        record_fail "CAPI-Machine-State"
     fi
 }
 
@@ -255,7 +257,7 @@ check_volumes()
         rm $healthy_state
     else
         echo "There are volumes that need your attention!"
-        record_fail
+        record_fail "Longhorn-Volume-Health-Status"
     fi
 }
 
@@ -302,7 +304,7 @@ check_attached_volumes()
         rm $clean_state
     else
         echo "There are stale volumes."
-        record_fail
+        record_fail "Stale-Longhorn-Volumes"
     fi
 }
 
@@ -320,7 +322,7 @@ check_error_pods()
 
     echo "There are non-ready pods:"
     echo "$pods" | yq '.items[] | select(.status.phase != "Running" and .status.phase != "Succeeded") | .metadata.namespace + "/" + .metadata.name'
-    record_fail
+    record_fail "Pod-Status"
 }
 
 # only works in Harvester nodes
@@ -338,7 +340,7 @@ check_free_space()
 
     echo "Nodes doesn't have enough free space:"
     echo "$result" | jq -r '.[].metric.instance'
-    record_fail
+    record_fail "Node-Free-Space"
 }
 
 check_bundles
