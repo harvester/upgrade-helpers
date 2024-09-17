@@ -38,11 +38,12 @@ done
 
 #Set failure counter to 0. 
 check_failed=0
+failed_check_name=''
 
 record_fail()
 {
     check_failed=$((check_failed+1))
-    failed_check_names=$((failed_check_names+"$1 "))
+    failed_check_names="${failed_check_names} ${1}"
     log_info "${1} Test: Failed"
     echo -e "\n==============================\n"
 }
@@ -219,6 +220,7 @@ check_machines()
     if [ -e $machine_ready_state  ]; then
         log_verbose "The CAPI machines are provisioned."
         log_info "CAPI-Machine-State Test: Pass"
+        echo -e "\n==============================\n"
         rm $machine_ready_state
     else
         log_verbose "There are non-ready CAPI machines."
@@ -371,9 +373,16 @@ check_error_pods()
 # Only works in Harvester nodes.
 check_free_space()
 {
+    log_info "Starting Node Free Space check..."
     prom_ip=$(kubectl get services/rancher-monitoring-prometheus -n cattle-monitoring-system -o yaml | yq -e '.spec.clusterIP')
+    log_verbose "Trying to get results from ${prom_ip}:9090"
     result=$(curl -sg "http://$prom_ip:9090/api/v1/query?query=node_filesystem_avail_bytes{mountpoint=\"/usr/local\"}<32212254720" | jq '.data.result')
-
+    if [ -z "${result}" ]; then
+        log_info "Script wasn't able to get valid response from the API."
+        log_info "You may need to log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+        record_fail "Node-Free-Space"
+        return
+    fi
     length=$(echo "$result" | jq 'length')
 
     if [ "$length" == "0" ]; then
@@ -394,7 +403,7 @@ check_log_file()
     if [ -e $log_file ]; then
         # Just clear the file if run with -y
         if [ "$answer" = true ]; then
-            echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] Cleared Previous Log File" >> "$log_file"
+            echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] Cleared Previous Log File" > "$log_file"
             return
         fi
         read -r -p "The file $log_file exists. Are you sure that you want to overwrite/clear the contents of that file? [Y/N]" response
