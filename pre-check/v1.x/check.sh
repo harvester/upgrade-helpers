@@ -72,7 +72,7 @@ log_info()
 
 check_bundles()
 {
-    log_info "Starting helm bundle status check... "
+    log_info "Starting Helm Bundle status check... "
 
     # fleet bundles should be ready
     # except mcc-harvester, which has Modified status in 1.0.3
@@ -80,7 +80,7 @@ check_bundles()
     pending=$(echo "$bundles" | yq '.items | any_c(.metadata.name != "mcc-harvester" and .spec.helm != null and .status.summary.ready == 0)')
 
     if [ "$pending" = "false" ]; then
-      log_verbose "All Helm bundles are ready."
+      log_verbose "All Helm Bundles are ready."
       log_info "Helm-Bundles Test: Pass"
       echo -e "\n==============================\n"
       return
@@ -94,7 +94,7 @@ check_bundles()
 
 check_harvester_bundle()
 {
-    log_info "Starting Harvester bundle status check..."
+    log_info "Starting Harvester Bundle status check..."
 
     current_summary=$(mktemp)
     kubectl get bundles.fleet.cattle.io/mcc-harvester -n fleet-local -o yaml | yq '.status.summary' > $current_summary
@@ -110,7 +110,7 @@ EOF
         record_fail "Harvester-Bundles"
         return
     fi
-    log_verbose "All Harvester bundles are ready."
+    log_verbose "All Harvester Bundles are ready."
     log_info "Harvester-Bundles Test: Pass"
     echo -e "\n==============================\n"
 }
@@ -118,7 +118,7 @@ EOF
 check_nodes()
 {
     local failed="false"
-    log_info "Starting Node-Status check... "
+    log_info "Starting Node Status check... "
 
     # Use a file to store the node state becuase we can't set the global variable inside the piped scope
     # The file is removed in the piped scope if there are not-ready nodes.
@@ -468,5 +468,5 @@ if [ $check_failed -gt 0 ]; then
     log_info "WARN: There are $check_failed failing checks:${failed_check_names}"
     exit 1
 else
-    log_info "All checks have pass."
+    log_info "All checks have passed."
 fi
