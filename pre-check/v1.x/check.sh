@@ -400,7 +400,7 @@ check_free_space()
 #If a log file exists ask users if they want to clear it, or exit. 
 check_log_file()
 {
-    if [ -e $log_file ]; then
+    if [ -e "$log_file" ]; then
         # Just clear the file if run with -y
         if [ "$answer" = true ]; then
             echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] Cleared Previous Log File" > "$log_file"
