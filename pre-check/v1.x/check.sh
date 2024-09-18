@@ -425,16 +425,15 @@ check_host()
     log_verbose "The hostname is: $(hostname)"
     log_verbose "Controlplane nodes are:\n${cp_nodes}"
     log_verbose "The OS release is: $(awk -F= '$1=="PRETTY_NAME" { print $2 ;}' /etc/os-release)"
-    # Just continue if -y was supplied
-    if [  "$answer" = true ]; then
-        log_info "Host Test: Skipped"
-        echo -e "\n==============================\n"
-        return
-    fi
     # Ask the user if they want to continue if the host isn't one of the cp nodes. 
     if [[ $cp_nodes == *"$(hostname)"* ]]; then
         log_info "Host Test: Pass"
             echo -e "\n==============================\n"
+    # Just continue if -y was supplied
+    elif [  "$answer" = true ]; then
+        log_info "Host Test: Skipped"
+        echo -e "\n==============================\n"
+        return
     else
         log_info "This script is intended to be run from one of the Harvester cluster's Control Plane nodes."
         log_info "It seems like you're running this script from $(hostname) and not one of the following nodes:\n${cp_nodes}"
