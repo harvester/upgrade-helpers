@@ -448,6 +448,24 @@ check_host()
     fi
 }
 
+# Check that local-kubeconfig secret has a label to avoid a known issue where the upgrade gets stuck. 
+# https://docs.harvesterhci.io/v1.3/upgrade/v1-2-2-to-v1-3-1#known-issues
+check_kubeconfig_secret()
+{
+    log_info "Starting Kubeconfig Secret check..."
+    # Get all the secrets with the label selector.
+    secrets=$(kubectl get secrets -n fleet-local --selector cluster.x-k8s.io/cluster-name=local)
+    # If  local-kubeconfig is in the list, the test passed.
+    if [[ $secrets == *"local-kubecoonfig"* ]]; then
+        log_info "Kubeconfig Secret Test: Pass"
+        echo -e "\n==============================\n"
+    else
+        log_info "Couldn't find the appropriate label on the local-kubeconfig secret.\nThere is a known issue, where the missing label causes upgrades to stall:\n https://docs.harvesterhci.io/v1.3/upgrade/v1-2-2-to-v1-3-1#known-issues\nHINT: This can be resolved by running\n'kubectl label secret local-kubeconfig -n fleet-local cluster.x-k8s.io/cluster-name=local'"
+        record_fail "Kubeconfig-Secret"
+    fi
+}
+
+
 check_log_file
 
 log_verbose "Script has started"
@@ -462,6 +480,7 @@ check_volumes
 check_attached_volumes
 check_error_pods
 check_free_space
+check_kubeconfig_secret
 
 if [ $check_failed -gt 0 ]; then
     log_info "WARN: There are $check_failed failing checks:${failed_check_names}"
