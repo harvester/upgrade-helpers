@@ -456,7 +456,7 @@ check_kubeconfig_secret()
     # Get all the secrets with the label selector.
     secrets=$(kubectl get secrets -n fleet-local --selector cluster.x-k8s.io/cluster-name=local)
     # If  local-kubeconfig is in the list, the test passed.
-    if [[ $secrets == *"local-kubecoonfig"* ]]; then
+    if [[ $secrets == *"local-kubeconfig"* ]]; then
         log_info "Kubeconfig Secret Test: Pass"
         echo -e "\n==============================\n"
     else
