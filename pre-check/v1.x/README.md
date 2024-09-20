@@ -30,6 +30,16 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     ==============================
     
+    Starting Certificates check...
+    Certificates Test: Pass
+    
+    ==============================
+    
+    Starting Node Free Space check...
+    Node-Free-Space Test: Pass
+    
+    ==============================
+    
     Starting Helm Bundle status check...
     Helm-Bundles Test: Pass
     
@@ -77,6 +87,11 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     Starting Node Free Space check...
     Node-Free-Space Test: Pass
+    
+    ==============================
+    
+    Starting Kubeconfig Secret check...
+    Kubeconfig Secret Test: Pass
     
     ==============================
     
