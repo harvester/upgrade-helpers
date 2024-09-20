@@ -378,8 +378,8 @@ check_free_space()
     log_verbose "Trying to get results from ${prom_ip}:9090"
     result=$(curl -sg "http://$prom_ip:9090/api/v1/query?query=node_filesystem_avail_bytes{mountpoint=\"/usr/local\"}<32212254720" | jq '.data.result')
     if [ -z "${result}" ]; then
-        log_info "Script wasn't able to get valid response from the API."
-        log_info "You may need to log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+        log_info "Script wasn't able to get valid response from the API.\nYou may need to log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+        log_verbose "Note: This check requires that the script is running from a control-plane node and that rancher-monitoring Addon is enabled."
         record_fail "Node-Free-Space"
         return
     fi
@@ -465,12 +465,66 @@ check_kubeconfig_secret()
     fi
 }
 
+# https://github.com/harvester/harvester/issues/3863
+# Certs might be expired if the services have not restarted and auto-updated.
+# This will ONLY work from the current node. 
+check_certs()
+{
+    log_info "Starting Certificates check..."
+    log_verbose "NOTE: This only checks certs on the current node. Typically certs rotate automatically before they're set to expire when the RKE service restarts or the node is rebooted."
+    # Set this to "false"
+    expired_certs=1
+    # Get a list of all the RKE certs.
+    certs_list=$(find /var/lib/rancher/rke2/server/tls/ -name *.crt)
+    log_verbose "Found the following certs: ${certs_list}"
+    if [[ -z ${certs_list} ]]; then
+        log_info "WARN: No certs found. Are you sure you're on a CP node?"
+        log_info "Certificates Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+    for cert in $certs_list; do
+        # If the cert is expired, fail the test and report the info. 
+        if ! openssl x509 -in $cert -noout -checkend 0 > /dev/null ; then
+            log_info "$cert has already expired."
+            # Set the var to "true"
+            expired_certs=0
+            log_verbose "${cert} info:\n$(openssl x509 -text -in $cert | grep -A 2 Validity)"
+        else
+            log_verbose "${cert} is valid."
+        fi
+    done
+    # If expired_certs is 'true' ( 0 ) then fail the test. 
+    if [[ ${expired_certs} == 0 ]]; then
+        # Give possible solution from GitHub issue and fail the test. 
+        log_info "One or more of your cerificates have already expired. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service cerificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCerificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
+        record_fail "Certificates"
+        return
+    fi
+    # Check to see if any certs are expiring in the next 10 days and throw a warning. 
+    for cert in $certs_list; do
+        # If the cert will expire in 10 days, Throw a warning.
+        if ! openssl x509 -in $cert -noout -checkend 864000 > /dev/null ; then
+            log_info "WARN: $cert will expire in less than 10 days. Check logs/verbose for additional information."
+            # Set the var to "true"
+            log_verbose "${cert} info:\n$(openssl x509 -text -in $cert | grep -A 2 Validity)"
+            log_verbose "Please remember that this ONLY checks certs on the node that you're running the script on. \nOther nodes may already have expired scripts. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service cerificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCerificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
+        else
+            log_verbose "${cert} is valid and does not expire soon."
+        fi
+    done
+    log_info "Certificates Test: Pass"
+    echo -e "\n==============================\n"
+}
+
 
 check_log_file
 
 log_verbose "Script has started"
 echo -e "==============================\n"
 check_host
+check_certs
+check_free_space
 check_bundles
 check_harvester_bundle
 check_nodes
