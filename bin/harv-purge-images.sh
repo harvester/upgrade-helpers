@@ -24,26 +24,49 @@ show_help_msg() {
   echo '  ./harv-purge-images.sh v1.1.2 v1.2.0                                                 '
 }
 
+get_arch_suffix() {
+    arch=$(uname -m)
+    if [[ "$arch" == "x86_64" ]]; then
+        echo "amd64"
+    else
+        echo "arm64"
+    fi
+}
+
+
 collect_image_list() {
   prev_ver=$1
   cur_ver=$2
-  
+
   mkdir "$TMP_DIR"/"$prev_ver"
   mkdir "$TMP_DIR"/"$cur_ver"
-  
+
+  prev_file_suffix=""
+  cur_file_suffix=""
+  if [[ ! "$prev_ver" =~ ^v1\.(0|1|2) ]]; then
+    # If version is greater than or equal to v1.3.0
+    prev_file_suffix="-$(get_arch_suffix)"
+  fi
+
+  if [[ ! "$cur_ver" =~ ^v1\.(0|1|2) ]]; then
+    # If version is greater than or equal to v1.3.0
+    cur_file_suffix="-$(get_arch_suffix)"
+  fi
+
+
   echo "Fetching $prev_ver image lists..."
-  curl -fL https://releases.rancher.com/harvester/"$prev_ver"/image-lists.tar.gz -o "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz
+  curl -fL https://releases.rancher.com/harvester/"$prev_ver"/image-lists"$prev_file_suffix".tar.gz -o "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz
   tar -zxvf "$TMP_DIR"/"$prev_ver"/image-lists.tar.gz -C "$TMP_DIR"/"$prev_ver"/
   echo "Fetching $cur_ver image lists..."
-  curl -fL https://releases.rancher.com/harvester/"$cur_ver"/image-lists.tar.gz -o "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz
+  curl -fL https://releases.rancher.com/harvester/"$cur_ver"/image-lists"$cur_file_suffix".tar.gz -o "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz
   tar -zxvf "$TMP_DIR"/"$cur_ver"/image-lists.tar.gz -C "$TMP_DIR"/"$cur_ver"/
-  
+
   prev_image_list="$TMP_DIR"/prev_image_list.txt
   cur_image_list="$TMP_DIR"/cur_image_list.txt
-  
+
   cat "$TMP_DIR"/"$prev_ver"/image-lists/*.txt | sort | uniq > "$prev_image_list"
   cat "$TMP_DIR"/"$cur_ver"/image-lists/*.txt | sort | uniq > "$cur_image_list"
-  
+
   echo '+------------------------------------------------------+'
   echo '| Images that are going to be REMOVED are listed BELOW |'
   echo '+------------------------------------------------------+'
