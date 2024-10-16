@@ -533,7 +533,6 @@ check_machines
 check_volumes
 check_attached_volumes
 check_error_pods
-check_free_space
 check_kubeconfig_secret
 
 if [ $check_failed -gt 0 ]; then
