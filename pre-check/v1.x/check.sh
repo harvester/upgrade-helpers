@@ -374,7 +374,13 @@ check_error_pods()
 check_free_space()
 {
     log_info "Starting Node Free Space check..."
-    prom_ip=$(kubectl get services/rancher-monitoring-prometheus -n cattle-monitoring-system -o yaml | yq -e '.spec.clusterIP')
+    prom_ip=$(kubectl get services/rancher-monitoring-prometheus -n cattle-monitoring-system -o yaml | yq '.spec.clusterIP')
+    if [ -z "${prom_ip}" ]; then
+        log_info "WARN: The script wasn't able to find a valid install of the rancher-monitoring addon, so it could not validate that there is sufficent freespace to complete the upgrade\nTo verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+        log_info "Node-Free-Space Test: SKIPPED"
+        echo -e "\n==============================\n"
+        return
+    fi
     log_verbose "Trying to get results from ${prom_ip}:9090"
     result=$(curl -sg "http://$prom_ip:9090/api/v1/query?query=node_filesystem_avail_bytes{mountpoint=\"/usr/local\"}<32212254720" | jq '.data.result')
     if [ -z "${result}" ]; then
