@@ -478,15 +478,20 @@ check_certs()
 {
     log_info "Starting Certificates check..."
     log_verbose "NOTE: This only checks certs on the current node. Typically certs rotate automatically before they're set to expire when the RKE service restarts or the node is rebooted."
+    # If the cert directory doesn't exist, then we're not on CP node. 
+    if [ ! -d "/var/lib/rancher/rke2/server/tls" ]; then
+        log_info "WARN: The cert directory could not be found. This script should be run from one of the controlplane nodes. Are you sure you're on a CP node?"
+        record_fail "Certificates"
+        return
+    fi
     # Set this to "false"
     expired_certs=1
     # Get a list of all the RKE certs.
     certs_list=$(find /var/lib/rancher/rke2/server/tls/ -name *.crt)
     log_verbose "Found the following certs: ${certs_list}"
     if [[ -z ${certs_list} ]]; then
-        log_info "WARN: No certs found. Are you sure you're on a CP node?"
-        log_info "Certificates Test: Skipped"
-        echo -e "\n==============================\n"
+        log_info "WARN: No certs found to be checked. Are you sure you're on a CP node?"
+        record_fail "Certificates"
         return
     fi
     for cert in $certs_list; do
