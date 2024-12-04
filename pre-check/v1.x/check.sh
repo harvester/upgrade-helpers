@@ -376,7 +376,7 @@ check_free_space()
     log_info "Starting Node Free Space check..."
     prom_ip=$(kubectl get services/rancher-monitoring-prometheus -n cattle-monitoring-system -o yaml | yq '.spec.clusterIP')
     # Skip the test if the variable is empty or literal "null"
-    if [[ -z "$ip_prom" ||  "$ip_prom" == "null" ]]; then
+    if [[ -z "$prom_ip" ||  "$prom_ip" == "null" ]]; then
         log_info "WARN: The script wasn't able to find a valid install of the rancher-monitoring addon, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
         log_info "Node-Free-Space Test: SKIPPED"
         echo -e "\n==============================\n"
@@ -509,7 +509,7 @@ check_certs()
     # If expired_certs is 'true' ( 0 ) then fail the test. 
     if [[ ${expired_certs} == 0 ]]; then
         # Give possible solution from GitHub issue and fail the test. 
-        log_info "One or more of your cerificates have already expired. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service cerificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCerificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
+        log_info "One or more of your certificates have already expired. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service certificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCertificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
         record_fail "Certificates"
         return
     fi
@@ -520,7 +520,7 @@ check_certs()
             log_info "WARN: $cert will expire in less than 10 days. Check logs/verbose for additional information."
             # Set the var to "true"
             log_verbose "${cert} info:\n$(openssl x509 -text -in $cert | grep -A 2 Validity)"
-            log_verbose "Please remember that this ONLY checks certs on the node that you're running the script on. \nOther nodes may already have expired scripts. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service cerificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCerificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
+            log_verbose "Please remember that this ONLY checks certs on the node that you're running the script on. \nOther nodes may already have expired scripts. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service certificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCertificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
         else
             log_verbose "${cert} is valid and does not expire soon."
         fi
