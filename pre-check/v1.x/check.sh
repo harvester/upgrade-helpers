@@ -356,9 +356,9 @@ check_error_pods()
     log_info "Starting Pod Status check..."
 
     pods=$(kubectl get pods -A -o yaml)
-    no_ok=$(echo "$pods" | yq '.items | any_c(.status.phase != "Running" and .status.phase != "Succeeded")')
+    no_ok=$(echo "$pods" | yq '.items[] | select(.status.conditions | any_c(.type == "Ready" and .status == "False" and .reason != "PodCompleted"))')
 
-    if [ "$no_ok" = "false" ]; then
+    if [ -z "$no_ok" ]; then
         log_verbose "All pods are OK."
         log_info "Pod-Status Test: Pass"
         echo -e "\n==============================\n"
@@ -366,7 +366,7 @@ check_error_pods()
     fi
 
     log_info "There are non-ready pods:"
-    log_info "$(echo "$pods" | yq '.items[] | select(.status.phase != "Running" and .status.phase != "Succeeded") | .metadata.namespace + "/" + .metadata.name')"
+    log_info "$(echo "$pods" | yq '.items[] | select(.status.conditions | any_c(.type == "Ready" and .status == "False" and .reason != "PodCompleted")) | .metadata.namespace + "/" + .metadata.name')"
     record_fail "Pod-Status"
 }
 
