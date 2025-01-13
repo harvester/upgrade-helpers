@@ -247,40 +247,24 @@ check_volumes()
 
     # For each running engine and its volume
     kubectl get engines.longhorn.io -n longhorn-system -o json |
-        jq -r '.items | map(select(.status.currentState == "running")) | map(.metadata.name + " " + .metadata.labels.longhornvolume) | .[]' | {
+        jq -r '.items | map(.metadata.name + " " + .metadata.labels.longhornvolume) | .[]' | {
             while read -r lh_engine lh_volume; do
-                log_verbose "Checking running engine: ${lh_engine}"
+                log_verbose "Checking engine: ${lh_engine}"
 
-                if [ $node_count -gt 2 ];then
-                    volume_json=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o json)
-                    # single-replica volumes should be handled exclusively
-                    volume_replicas=$(echo $volume_json | jq -r '.spec.numberOfReplicas')
-                    if [ $volume_replicas -eq 1 ]; then
-                        log_info "Volume ${lh_volume} is a single-replica volume. Please consider shutting down the corresponding workload or adjusting its replica count before upgrading."
-                        rm -f $healthy_state
+                volume_json=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o json)
+                # single-replica volumes should be handled exclusively
+                volume_replicas=$(echo $volume_json | jq -r '.spec.numberOfReplicas')
+                if [ $volume_replicas -eq 1 ]; then
+                    state=$(echo $volume_json | jq -r '.status.state')
+                    if [ "$state" = "create" ] || [ "$state" = "attaching" ] || [ "$state" = "attached" ]; then
+                        log_info "Volume ${lh_volume} is a single-replica volume in running state, it will block node drain. Please consider adjusting its replica count before upgrading."
                     else
-                        robustness=$(echo $volume_json | jq -r '.status.robustness')
-                        if [ "$robustness" = "healthy" ]; then
-                            log_verbose "Volume ${lh_volume} is healthy."
-                        else
-                            log_info "Degraded Longhorn Volume found: ${lh_volume}"
-                            rm -f $healthy_state
-                        fi
+                        log_info "Volume ${lh_volume} is a single-replica volume in detached state, it will block node drain before v1.4.0. For upgrades starting from v1.4.0, though node draining will not be blocked, the upgrade may still have potential data integrity concerns. Please consider adjusting its replica count before upgrading."
                     fi
+                    rm -f $healthy_state
                 else
-                    # This is a two node situation since we skip this in single nodes and the previous section is 3 or more. 
-                    # Make sure maximum two replicas are healthy.
-                    expected_replicas=2
-
-                    # Replica 1 case
-                    volume_replicas=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o jsonpath='{.spec.numberOfReplicas}')
-                    if [ $volume_replicas -eq 1 ]; then
-                        expected_replicas=1
-                    fi
-
-                    ready_replicas=$(kubectl get engines.longhorn.io/$lh_engine -n longhorn-system -o json |
-                                    jq -r '.status.replicaModeMap | to_entries | map(select(.value == "RW")) | length')
-                    if [ $ready_replicas -ge $expected_replicas ]; then
+                    robustness=$(echo $volume_json | jq -r '.status.robustness')
+                    if [ "$robustness" = "healthy" ]; then
                         log_verbose "Volume ${lh_volume} is healthy."
                     else
                         log_info "Degraded Longhorn Volume found: ${lh_volume}"
