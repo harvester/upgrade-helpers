@@ -251,7 +251,11 @@ check_volumes()
             while read -r lh_engine lh_volume; do
                 log_verbose "Checking engine: ${lh_engine}"
 
-                volume_json=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o json)
+                volume_json=$(kubectl get volumes.longhorn.io/$lh_volume -n longhorn-system -o json 2>/dev/null || true)
+                if [ -z "$volume_json" ]; then
+                    log_info "Volume ${lh_volume} not found."
+                    continue
+                fi
                 # single-replica volumes should be handled exclusively
                 volume_replicas=$(echo $volume_json | jq -r '.spec.numberOfReplicas')
                 if [ $volume_replicas -eq 1 ]; then
