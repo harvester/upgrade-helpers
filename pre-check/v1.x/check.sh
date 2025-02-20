@@ -15,7 +15,7 @@ while getopts "hvyl:" flag; do
    h) # Handle the -h flag
    # Display script help information
    usage
-   exit 0 
+   exit 0
    ;;
    l) # Handle the -l with an argument
    log_file=$OPTARG
@@ -25,7 +25,7 @@ while getopts "hvyl:" flag; do
    verbose=true
    ;;
    y) # Handle the -y flag
-   # Assumes a 'y' answer to all prompts to continue. 
+   # Assumes a 'y' answer to all prompts to continue.
    answer=true
    ;;
    \?)
@@ -36,7 +36,7 @@ while getopts "hvyl:" flag; do
  esac
 done
 
-#Set failure counter to 0. 
+#Set failure counter to 0.
 check_failed=0
 failed_check_name=''
 
@@ -54,12 +54,12 @@ log_verbose()
     if [ $log_file ]; then
         echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ${1}" >> "$log_file"
     fi
-    if [ "$verbose" = true ]; then 
+    if [ "$verbose" = true ]; then
         echo -e "${1}"
     fi
 }
 
-#Log Info/Error Messages and always echo them. 
+#Log Info/Error Messages and always echo them.
 log_info()
 {
     if [ $log_file ]; then
@@ -317,7 +317,7 @@ check_attached_volumes()
             #     workloadType: VirtualMachineInstance
             is_stale=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus != "Running")')
             if [ "$is_stale" = "true" ]; then
-                log_info "Volume ${vol_name} is attached, but one or more of its workloads is not running." 
+                log_info "Volume ${vol_name} is attached, but one or more of its workloads is not running."
                 log_verbose "Details of the workloads:\n$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus')"
                 rm -f $clean_state
             fi
@@ -358,37 +358,67 @@ check_error_pods()
 check_free_space()
 {
     log_info "Starting Node Free Space check..."
-    prom_ip=$(kubectl get services/rancher-monitoring-prometheus -n cattle-monitoring-system -o yaml | yq '.spec.clusterIP')
-    # Skip the test if the variable is empty or literal "null"
-    if [[ -z "$prom_ip" ||  "$prom_ip" == "null" ]]; then
-        log_info "WARN: The script wasn't able to find a valid install of the rancher-monitoring addon, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+
+    # Get all secrets in the cattle-system namespace and filter the first one with "generateName: rancher-token-"
+    secret=$(kubectl get secrets -n cattle-system -o yaml | yq '.items[] | select(.metadata.generateName == "rancher-token-") | .data.token' | head -n 1)
+
+    if [[ -z "$secret" ]]; then
+        log_info "WARN: The script wasn't able to find a valid rancher-token secret, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
         log_info "Node-Free-Space Test: SKIPPED"
         echo -e "\n==============================\n"
         return
     fi
-    log_verbose "Trying to get results from ${prom_ip}:9090"
-    result=$(curl -sg "http://$prom_ip:9090/api/v1/query?query=node_filesystem_avail_bytes{mountpoint=\"/usr/local\"}<32212254720" | jq '.data.result')
-    if [ -z "${result}" ]; then
-        log_info "Script wasn't able to get valid response from the API.\nYou may need to log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
-        log_verbose "Note: This check requires that the script is running from a control-plane node and that rancher-monitoring Addon is enabled."
-        record_fail "Node-Free-Space"
-        return
-    fi
-    length=$(echo "$result" | jq 'length')
 
-    if [ "$length" == "0" ]; then
-        log_verbose "All nodes have more than 30GB free space."
+    token=$(echo "$secret" | base64 -d)
+
+    # Use a file to store the disk space state becuase we can't set the global variable inside the piped scope
+    # The file is removed in the piped scope if there are any node without enough disk space.
+    disk_space_state=$(mktemp)
+
+    # For each running engine and its volume
+    kubectl get nodes -o json |
+        jq -r '.items | map(.metadata.name + " " + (.metadata.annotations["rke2.io/internal-ip"] // "null") + " " + (.status.daemonEndpoints.kubeletEndpoint.Port | tostring)) | .[]' | {
+            while read -r node_name node_ip kubelet_port; do
+                log_verbose "Checking node: ${node_name} with IP: ${node_ip} and Kubelet Port: ${kubelet_port}"
+
+                # Skip the test if the variable is empty or literal "null"
+                if [[ -z "$node_ip" ||  "$node_ip" == "null" || -z "$kubelet_port" ]]; then
+                    log_info "WARN: The script wasn't able to find a valid IP/Port for the node ${node_name}, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+                    continue
+                fi
+
+                stat_summary=$(curl -sk https://${node_ip}:${kubelet_port}/stats/summary -H "Authorization: Bearer ${token}" | jq .node.fs)
+                used_bytes=$(echo "$stat_summary" | jq '.usedBytes')
+                capacity_bytes=$(echo "$stat_summary" | jq '.capacityBytes')
+
+                if [ -z "$used_bytes" ] || [ -z "$capacity_bytes" ]; then
+                    log_info "WARN: The script wasn't able to get valid response from the API for the node ${node_name}, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+                    continue
+                fi
+
+                # New images usage will be around 13GB (13 * 1024 * 1024 * 1024 bytes).
+                # If used space + 13GB is more than 85% of the capacity, then the node doesn't have enough free space.
+                if [ $(echo "scale=2; ($used_bytes + 13958643712) / $capacity_bytes > 0.85" | bc) -eq 1 ]; then
+                    log_info "Node ${node_name} doesn't have enough free space."
+                    log_info "Used: $(echo "$used_bytes / 1024 / 1024 / 1024" | bc) GB"
+                    log_info "Capacity: $(echo "$capacity_bytes / 1024 / 1024 / 1024" | bc) GB"
+                    rm -f $disk_space_state
+                fi
+            done
+        }
+
+    if [ -e $disk_space_state ]; then
+        log_verbose "All nodes have enough free space to load new images."
         log_info "Node-Free-Space Test: Pass"
         echo -e "\n==============================\n"
-        return
+        rm $disk_space_state
+    else
+        log_info "There are nodes without enough free space to load new images!"
+        record_fail "Node-Free-Space"
     fi
-
-    log_info "Nodes doesn't have enough free space:"
-    log_info "$(echo "$result" | jq -r '.[].metric.instance')"
-    record_fail "Node-Free-Space"
 }
 
-#If a log file exists ask users if they want to clear it, or exit. 
+#If a log file exists ask users if they want to clear it, or exit.
 check_log_file()
 {
     if [ -e "$log_file" ]; then
@@ -416,7 +446,7 @@ check_host()
     log_verbose "The hostname is: $(hostname)"
     log_verbose "Controlplane nodes are:\n${cp_nodes}"
     log_verbose "The OS release is: $(awk -F= '$1=="PRETTY_NAME" { print $2 ;}' /etc/os-release)"
-    # Ask the user if they want to continue if the host isn't one of the cp nodes. 
+    # Ask the user if they want to continue if the host isn't one of the cp nodes.
     if [[ $cp_nodes == *"$(hostname)"* ]]; then
         log_info "Host Test: Pass"
             echo -e "\n==============================\n"
@@ -439,7 +469,7 @@ check_host()
     fi
 }
 
-# Check that local-kubeconfig secret has a label to avoid a known issue where the upgrade gets stuck. 
+# Check that local-kubeconfig secret has a label to avoid a known issue where the upgrade gets stuck.
 # https://docs.harvesterhci.io/v1.3/upgrade/v1-2-2-to-v1-3-1#known-issues
 check_kubeconfig_secret()
 {
@@ -458,12 +488,12 @@ check_kubeconfig_secret()
 
 # https://github.com/harvester/harvester/issues/3863
 # Certs might be expired if the services have not restarted and auto-updated.
-# This will ONLY work from the current node. 
+# This will ONLY work from the current node.
 check_certs()
 {
     log_info "Starting Certificates check..."
     log_verbose "NOTE: This only checks certs on the current node. Typically certs rotate automatically before they're set to expire when the RKE service restarts or the node is rebooted."
-    # If the cert directory doesn't exist, then we're not on CP node. 
+    # If the cert directory doesn't exist, then we're not on CP node.
     if [ ! -d "/var/lib/rancher/rke2/server/tls" ]; then
         log_info "WARN: The cert directory could not be found. This script should be run from one of the controlplane nodes. Are you sure you're on a CP node?"
         record_fail "Certificates"
@@ -480,7 +510,7 @@ check_certs()
         return
     fi
     for cert in $certs_list; do
-        # If the cert is expired, fail the test and report the info. 
+        # If the cert is expired, fail the test and report the info.
         if ! openssl x509 -in $cert -noout -checkend 0 > /dev/null ; then
             log_info "$cert has already expired."
             # Set the var to "true"
@@ -490,14 +520,14 @@ check_certs()
             log_verbose "${cert} is valid."
         fi
     done
-    # If expired_certs is 'true' ( 0 ) then fail the test. 
+    # If expired_certs is 'true' ( 0 ) then fail the test.
     if [[ ${expired_certs} == 0 ]]; then
-        # Give possible solution from GitHub issue and fail the test. 
+        # Give possible solution from GitHub issue and fail the test.
         log_info "One or more of your certificates have already expired. \nTypically certs should auto-renew when the RKE service is restarted (This can also happen when you reboot a node) \nYou can also trigger a rotation of all a nodes' service certificates by running: \nkubectl edit clusters.provisioning.cattle.io local -n fleet-local \nand adding +=1 to the spec.rkeConfig.rotateCertificates.generation field or set it to 1 if it's missing. \nThis should be done before an upgrade. If an upgrade is already in process you might follow the workaround listed in this GitHub Issue: \nhttps://github.com/harvester/harvester/issues/3863#issuecomment-1539681311"
         record_fail "Certificates"
         return
     fi
-    # Check to see if any certs are expiring in the next 10 days and throw a warning. 
+    # Check to see if any certs are expiring in the next 10 days and throw a warning.
     for cert in $certs_list; do
         # If the cert will expire in 10 days, Throw a warning.
         if ! openssl x509 -in $cert -noout -checkend 864000 > /dev/null ; then
