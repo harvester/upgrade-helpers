@@ -273,8 +273,8 @@ check_volumes()
                         log_verbose "Volume ${lh_volume} is healthy."
                     elif [ "$state" = "detached" ]; then
                         replica_count=$(kubectl get replicas -n longhorn-system -l longhornvolume=$lh_volume -o json | jq '.items | length')
-                        if [ $replica_count -le 1 ]; then
-                            log_info "Degraded Longhorn Volume found: ${lh_volume}"
+                        if [ $replica_count -lt $volume_replicas ]; then
+                            log_info "Detached Longhorn Volume: ${lh_volume} w/o enough replicas"
                             rm -f $healthy_state
                         else
                             log_info "Detached Longhorn Volume found: ${lh_volume}"
