@@ -411,10 +411,10 @@ check_free_space()
 
                 # New images usage will be around 13GB (13 * 1024 * 1024 * 1024 bytes).
                 # If used space + 13GB is more than 85% of the capacity, then the node doesn't have enough free space.
-                if [ $(echo "scale=2; ($used_bytes + 13958643712) / $capacity_bytes > 0.85" | bc) -eq 1 ]; then
+                if awk -v used="$used_bytes" -v cap="$capacity_bytes" 'BEGIN {exit !(((used + 13958643712) / cap) > 0.85)}'; then
                     log_info "Node ${node_name} doesn't have enough free space."
-                    log_info "Used: $(echo "$used_bytes / 1024 / 1024 / 1024" | bc) GB"
-                    log_info "Capacity: $(echo "$capacity_bytes / 1024 / 1024 / 1024" | bc) GB"
+                    log_info "Used: $(awk -v used="$used_bytes" 'BEGIN {printf "%.2f", used/1024/1024/1024}') GB"
+                    log_info "Capacity: $(awk -v cap="$capacity_bytes" 'BEGIN {printf "%.2f", cap/1024/1024/1024}') GB"
                     rm -f $disk_space_state
                 fi
             done
