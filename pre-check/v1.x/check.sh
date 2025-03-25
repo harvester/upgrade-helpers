@@ -274,10 +274,10 @@ check_volumes()
                     elif [ "$state" = "detached" ]; then
                         replica_count=$(kubectl get replicas -n longhorn-system -l longhornvolume=$lh_volume -o json | jq '.items | length')
                         if [ $replica_count -lt $volume_replicas ]; then
-                            log_info "Detached Longhorn Volume: ${lh_volume} w/o enough replicas"
+                            log_info "Detached Longhorn Volume: ${lh_volume} should have ${volume_replicas} replicas, but only has ${replica_count}."
                             rm -f $healthy_state
                         else
-                            log_info "Detached Longhorn Volume found: ${lh_volume}"
+                            log_verbose "Detached Longhorn Volume found: ${lh_volume}"
                         fi
                     else
                         log_info "Degraded Longhorn Volume found: ${lh_volume}"
@@ -288,7 +288,7 @@ check_volumes()
             done
         }
 
-    if [ -e $healthy_state ]; then
+    if [ -e $"healthy_state" ]; then
         log_verbose "All volumes are healthy."
         log_info "Longhorn-Volume-Health-Status Test: Pass"
         echo -e "\n==============================\n"
@@ -337,7 +337,7 @@ check_attached_volumes()
             sleep 0.5
         done
     }
-    if [ -e $clean_state ]; then
+    if [ -e "$clean_state" ]; then
         log_verbose "There are no stale Longhorn volumes."
         rm $clean_state
         log_info "Stale-Longhorn-Volumes Test: Pass"
@@ -420,7 +420,7 @@ check_free_space()
             done
         }
 
-    if [ -e $disk_space_state ]; then
+    if [ -e "$disk_space_state" ]; then
         log_verbose "All nodes have enough free space to load new images."
         log_info "Node-Free-Space Test: Pass"
         echo -e "\n==============================\n"
