@@ -587,6 +587,51 @@ check_backup_target()
     echo -e "\n==============================\n"
 }
 
+# This throws a warning if the minimum number of copies for a backing image is less than the default (3) 
+# Or if the minimum number of copies is set to '0' - it failes the test. VMs won't start if the backing image isn't available after upgrade. 
+check_images()
+{
+    log_info "Starting Longhorn Backing Images check..."
+    log_verbose "NOTE: This test will throw a warning if less than the default value and fail if minimum number of copies is set to 0."
+    # Use a file to store the clean state becuase we can't set the global variable inside the piped scope
+    # The file is removed in the event of a failure
+    clean_state=$(mktemp)
+
+    backingImageList=$(kubectl get backingImage -A  -o yaml | yq -r '.items[] | .metadata.name ')
+    for backingImage in $backingImageList ; do
+        minCopies=$(kubectl -n longhorn-system get backingImage $backingImage -o yaml | yq -r '.spec.minNumberOfCopies ')
+        if [[ $minCopies -eq 0 ]]; then
+            log_info "WARN: $backingImage has no minimum number of copies set!"
+            rm -f $clean_state
+            sleep 0.5
+            continue
+        elif [[ $minCopies -lt 3 ]]; then
+            log_info "Warning: Backing image $backingImage has a minimum number of copies set to $minCopies. It is strongly encouraged to set this number to be at least 3 or higher. "
+            if [ ! -e "$warn_state" ]; then
+                warn_state=$(mktemp)
+            fi 
+        else
+            log_verbose "$backingImage has $minCopies minimum copies set."
+        fi
+    done
+    if [ -e "$warn_state" ]; then
+        log_info "Some images have less than the recommended minimum number of copies."
+        rm -f $clean_state
+        rm -f $warn_state
+        log_info "Longhorn-Backing-Images Test: WARNING"
+        echo -e "\n==============================\n"
+    elif [ -e "$clean_state" ]; then
+        log_verbose "All images have a minimum of 3 or more copies."
+        rm -f $clean_state
+        log_info "Longhorn-Backing-Images Test: Pass"
+        echo -e "\n==============================\n"
+    else
+        log_verbose "Some Backing images have no miniumum copies set."
+        record_fail "Longhorn-Backing-Images"
+    fi
+
+}
+
 
 check_log_file
 
@@ -602,6 +647,7 @@ check_cluster
 check_machines
 check_volumes
 check_attached_volumes
+check_images
 check_error_pods
 check_kubeconfig_secret
 check_backup_target
