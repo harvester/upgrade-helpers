@@ -152,7 +152,7 @@ check_nodes()
             fi
         done
 
-    if [ -e $node_ready_state ]; then
+    if [ -e "$node_ready_state" ]; then
         log_verbose "All nodes are ready."
         log_info "Node-Status Test: Pass"
         echo -e "\n==============================\n"
@@ -217,7 +217,7 @@ check_machines()
             fi
         done
 
-    if [ -e $machine_ready_state  ]; then
+    if [ -e "$machine_ready_state"  ]; then
         log_verbose "The CAPI machines are provisioned."
         log_info "CAPI-Machine-State Test: Pass"
         echo -e "\n==============================\n"
@@ -288,7 +288,7 @@ check_volumes()
             done
         }
 
-    if [ -e $"healthy_state" ]; then
+    if [ -e "$healthy_state" ]; then
         log_verbose "All volumes are healthy."
         log_info "Longhorn-Volume-Health-Status Test: Pass"
         echo -e "\n==============================\n"
