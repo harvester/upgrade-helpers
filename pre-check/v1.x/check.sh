@@ -556,6 +556,37 @@ check_certs()
     echo -e "\n==============================\n"
 }
 
+check_backup_target()
+{
+    log_info "Starting Backup Target check..."
+
+    version=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value')
+
+    if [ "$version" == "v1.4.1" ] || [ "$version" == "v1.4.2" ]; then
+        type=$(kubectl get settings.harvesterhci.io backup-target -o json | jq -r '.value' | jq -r '.type')
+        if [ $type == "null" ] || [ -z "$type" ]; then
+            log_info "Backup Target Test: Pass"
+            echo -e "\n==============================\n"
+            return
+        fi
+
+        refreshIntervalInSeconds=$(kubectl get settings.harvesterhci.io backup-target -o json | jq -r '.value' | jq -r '.refreshIntervalInSeconds')
+        if [ $refreshIntervalInSeconds == "null" ] || [ -z "$refreshIntervalInSeconds" ] || [ "$refreshIntervalInSeconds" -eq 0 ]; then
+            log_info "The refreshIntervalInSeconds is either 0 or empty. Please configure it to a bigger integer like 300 before proceeding."
+            record_fail "Backup-Target"
+            return
+        fi
+    else
+        log_info "The current version ($version) is not v1.4.1 or v1.4.2. Skip the Backup Target check."
+        log_info "Backup Target Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    log_info "Backup Target Test: Pass"
+    echo -e "\n==============================\n"
+}
+
 
 check_log_file
 
@@ -573,6 +604,7 @@ check_volumes
 check_attached_volumes
 check_error_pods
 check_kubeconfig_secret
+check_backup_target
 
 if [ $check_failed -gt 0 ]; then
     log_info "WARN: There are $check_failed failing checks:${failed_check_names}"
