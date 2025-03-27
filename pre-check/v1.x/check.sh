@@ -152,7 +152,7 @@ check_nodes()
             fi
         done
 
-    if [ -e $node_ready_state ]; then
+    if [ -e "$node_ready_state" ]; then
         log_verbose "All nodes are ready."
         log_info "Node-Status Test: Pass"
         echo -e "\n==============================\n"
@@ -217,7 +217,7 @@ check_machines()
             fi
         done
 
-    if [ -e $machine_ready_state  ]; then
+    if [ -e "$machine_ready_state"  ]; then
         log_verbose "The CAPI machines are provisioned."
         log_info "CAPI-Machine-State Test: Pass"
         echo -e "\n==============================\n"
@@ -274,10 +274,10 @@ check_volumes()
                     elif [ "$state" = "detached" ]; then
                         replica_count=$(kubectl get replicas -n longhorn-system -l longhornvolume=$lh_volume -o json | jq '.items | length')
                         if [ $replica_count -lt $volume_replicas ]; then
-                            log_info "Detached Longhorn Volume: ${lh_volume} w/o enough replicas"
+                            log_info "Detached Longhorn Volume: ${lh_volume} should have ${volume_replicas} replicas, but only has ${replica_count}."
                             rm -f $healthy_state
                         else
-                            log_info "Detached Longhorn Volume found: ${lh_volume}"
+                            log_verbose "Detached Longhorn Volume found: ${lh_volume}"
                         fi
                     else
                         log_info "Degraded Longhorn Volume found: ${lh_volume}"
@@ -288,7 +288,7 @@ check_volumes()
             done
         }
 
-    if [ -e $healthy_state ]; then
+    if [ -e "$healthy_state" ]; then
         log_verbose "All volumes are healthy."
         log_info "Longhorn-Volume-Health-Status Test: Pass"
         echo -e "\n==============================\n"
@@ -337,7 +337,7 @@ check_attached_volumes()
             sleep 0.5
         done
     }
-    if [ -e $clean_state ]; then
+    if [ -e "$clean_state" ]; then
         log_verbose "There are no stale Longhorn volumes."
         rm $clean_state
         log_info "Stale-Longhorn-Volumes Test: Pass"
@@ -420,7 +420,7 @@ check_free_space()
             done
         }
 
-    if [ -e $disk_space_state ]; then
+    if [ -e "$disk_space_state" ]; then
         log_verbose "All nodes have enough free space to load new images."
         log_info "Node-Free-Space Test: Pass"
         echo -e "\n==============================\n"
@@ -587,6 +587,33 @@ check_backup_target()
     echo -e "\n==============================\n"
 }
 
+# This throws a warning if the minimum number of copies for a backing image is less than the default (3) 
+# Or if the minimum number of copies is set to '0' - it failes the test. VMs won't start if the backing image isn't available after upgrade. 
+check_images()
+{
+    log_info "Starting Longhorn Backing Images check..."
+    log_verbose "NOTE: This test will throw a warning if less than the default value and fail if minimum number of copies is set to 0."
+    backingImageList=$(kubectl get backingImage -A  -o yaml | yq -r '.items[] | .metadata.name ')
+    backingImageLowCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies<3)].metadata.name}')
+    backingImageNoMinCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies==0)].metadata.name}')
+    log_verbose "All the backingImages found: ${backingImageList}"
+    log_verbose "Images with no min copies: ${backingImageNoMinCount}"
+    log_verbose "Images with less than 3 copies: ${backingImageLowCount}"
+    if [ -n "$backingImageNoMinCount" ]; then
+        log_info "Some Backing images have no miniumum copies set: ${backingImageNoMinCount}"
+        record_fail "Longhorn-Backing-Images"
+    elif [ -n "$backingImageLowCount" ]; then
+        log_info "Some images have less than the recommended minimum number of copies: ${backingImageLowCount}"
+        log_info "Longhorn-Backing-Images Test: WARNING"
+        echo -e "\n==============================\n"
+    else
+        log_verbose "All images have a minimum of 3 or more copies."
+        rm -f $clean_state
+        log_info "Longhorn-Backing-Images Test: Pass"
+        echo -e "\n==============================\n"
+    fi
+}
+
 
 check_log_file
 
@@ -602,6 +629,7 @@ check_cluster
 check_machines
 check_volumes
 check_attached_volumes
+check_images
 check_error_pods
 check_kubeconfig_secret
 check_backup_target
