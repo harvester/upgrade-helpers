@@ -593,43 +593,25 @@ check_images()
 {
     log_info "Starting Longhorn Backing Images check..."
     log_verbose "NOTE: This test will throw a warning if less than the default value and fail if minimum number of copies is set to 0."
-    # Use a file to store the clean state becuase we can't set the global variable inside the piped scope
-    # The file is removed in the event of a failure
-    clean_state=$(mktemp)
-
     backingImageList=$(kubectl get backingImage -A  -o yaml | yq -r '.items[] | .metadata.name ')
-    for backingImage in $backingImageList ; do
-        minCopies=$(kubectl -n longhorn-system get backingImage $backingImage -o yaml | yq -r '.spec.minNumberOfCopies ')
-        if [[ $minCopies -eq 0 ]]; then
-            log_info "WARN: $backingImage has no minimum number of copies set!"
-            rm -f $clean_state
-            sleep 0.5
-            continue
-        elif [[ $minCopies -lt 3 ]]; then
-            log_info "Warning: Backing image $backingImage has a minimum number of copies set to $minCopies. It is strongly encouraged to set this number to be at least 3 or higher. "
-            if [ ! -e "$warn_state" ]; then
-                warn_state=$(mktemp)
-            fi 
-        else
-            log_verbose "$backingImage has $minCopies minimum copies set."
-        fi
-    done
-    if [ -e "$warn_state" ]; then
-        log_info "Some images have less than the recommended minimum number of copies."
-        rm -f $clean_state
-        rm -f $warn_state
+    backingImageLowCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies<3)].metadata.name}')
+    backingImageNoMinCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies==0)].metadata.name}')
+    log_verbose "All the backingImages found: ${backingImageList}"
+    log_verbose "Images with no min copies: ${backingImageNoMinCount}"
+    log_verbose "Images with less than 3 copies: ${backingImageLowCount}"
+    if [ -n "$backingImageNoMinCount" ]; then
+        log_info "Some Backing images have no miniumum copies set: ${backingImageNoMinCount}"
+        record_fail "Longhorn-Backing-Images"
+    elif [ -n "$backingImageLowCount" ]; then
+        log_info "Some images have less than the recommended minimum number of copies: ${backingImageLowCount}"
         log_info "Longhorn-Backing-Images Test: WARNING"
         echo -e "\n==============================\n"
-    elif [ -e "$clean_state" ]; then
+    else
         log_verbose "All images have a minimum of 3 or more copies."
         rm -f $clean_state
         log_info "Longhorn-Backing-Images Test: Pass"
         echo -e "\n==============================\n"
-    else
-        log_verbose "Some Backing images have no miniumum copies set."
-        record_fail "Longhorn-Backing-Images"
     fi
-
 }
 
 
