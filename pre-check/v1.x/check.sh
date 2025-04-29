@@ -593,7 +593,7 @@ check_images()
 {
     log_info "Starting Longhorn Backing Images check..."
     log_verbose "NOTE: This test will throw a warning if less than the default value and fail if minimum number of copies is set to 0."
-    backingImageList=$(kubectl get backingImage -A  -o yaml | yq -r '.items[] | .metadata.name ')
+    backingImageList=$(kubectl get backingImage -A  -o yaml | yq '.items[] | .metadata.name ')
     backingImageLowCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies<3)].metadata.name}')
     backingImageNoMinCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies==0)].metadata.name}')
     log_verbose "All the backingImages found: ${backingImageList}"
