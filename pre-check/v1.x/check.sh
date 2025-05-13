@@ -592,6 +592,24 @@ check_backup_target()
 check_images()
 {
     log_info "Starting Longhorn Backing Images check..."
+
+    version=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value')
+
+    # Check if version is empty
+    if [[ -z "$version" ]]; then
+        log_error "Failed to retrieve server version. Exiting Longhorn Backing Images check."
+        log_info "Longhorn-Backing-Images Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+    # If version is before v1.4.x, print a message and return
+    if [[ $version =~ ^v(1\.[0-3])\..* ]]; then
+        log_info "Current version ($version) is before v1.4.x. This check is not applicable."
+        log_info "Longhorn-Backing-Images Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
     log_verbose "NOTE: This test will throw a warning if less than the default value and fail if minimum number of copies is set to 0."
     backingImageList=$(kubectl get backingImage -A  -o yaml | yq -r '.items[] | .metadata.name ')
     backingImageLowCount=$(kubectl get backingImage -A -ojsonpath='{.items[?(@.spec.minNumberOfCopies<3)].metadata.name}')
