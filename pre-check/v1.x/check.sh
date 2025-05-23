@@ -455,7 +455,7 @@ check_log_file()
 check_host()
 {
     log_info "Starting Host check... "
-    cp_nodes=$(kubectl get nodes |grep control-plane |awk '{ print $1 }')
+    cp_nodes=$(kubectl get nodes -l node-role.kubernetes.io/control-plane=true -o name | cut -d'/' -f2)
     log_verbose "The hostname is: $(hostname)"
     log_verbose "Controlplane nodes are:\n${cp_nodes}"
     log_verbose "The OS release is: $(awk -F= '$1=="PRETTY_NAME" { print $2 ;}' /etc/os-release)"
@@ -588,7 +588,7 @@ check_backup_target()
 }
 
 # This throws a warning if the minimum number of copies for a backing image is less than the default (3) 
-# Or if the minimum number of copies is set to '0' - it failes the test. VMs won't start if the backing image isn't available after upgrade. 
+# Or if the minimum number of copies is set to '0' - it fails the test. VMs won't start if the backing image isn't available after upgrade.
 check_images()
 {
     log_info "Starting Longhorn Backing Images check..."
