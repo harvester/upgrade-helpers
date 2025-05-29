@@ -82,7 +82,7 @@ check_nodes()
     # log to customer that cluster has witness nodes
     witness=$(echo "$nodes" | yq '.items[] | select(.metadata.labels."node-role.harvesterhci.io/witness" == "true")' )
     if [ -n "$witness"]; then
-        log_info "There are witness nodes in your cluster."
+        echo "There are witness nodes in your cluster."
         witness_name=$(echo "$witness" | yq .metadata.name)
 
         # witness node MUST have the etcd:NoExecute taint
@@ -90,10 +90,10 @@ check_nodes()
         | jq '[.spec.taints[] | select(.key == "node-role.kubernetes.io/etcd" and .value == "true" and .effect == "NoExecute")] | length')
 
         if [ "$has_taint" -gt 0  ]; then
-            log_info "Witness node has the etcd:NoExecute taint."
+            echo "Witness node has the etcd:NoExecute taint."
         else
-            log_info "Witness node does NOT have the etcd:NoExecute taint."
-            log_info "Node $witness_name has no etcd:NoExecute taint."
+            echo "Witness node does NOT have the etcd:NoExecute taint."
+            echo "Node $witness_name has no etcd:NoExecute taint."
             rm -f $node_ready_state
         fi
     fi
