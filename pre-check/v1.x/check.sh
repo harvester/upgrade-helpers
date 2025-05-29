@@ -149,6 +149,7 @@ check_nodes()
         else
             log_info "Witness node does NOT have the etcd:NoExecute taint."
             log_info "Node $witness_name has no etcd:NoExecute taint."
+            rm -f $node_ready_state
         fi
     fi
 
