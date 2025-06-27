@@ -400,7 +400,7 @@ check_free_space()
                     continue
                 fi
 
-                stat_summary=$(curl -sk https://${node_ip}:${kubelet_port}/stats/summary -H "Authorization: Bearer ${token}" | jq .node.fs)
+                stat_summary=$(curl --noproxy '*' -sk https://${node_ip}:${kubelet_port}/stats/summary -H "Authorization: Bearer ${token}" | jq .node.fs)
                 used_bytes=$(echo "$stat_summary" | jq '.usedBytes')
                 capacity_bytes=$(echo "$stat_summary" | jq '.capacityBytes')
 
