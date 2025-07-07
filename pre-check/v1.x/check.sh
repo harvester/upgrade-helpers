@@ -161,6 +161,39 @@ check_nodes()
         log_verbose "There are non-ready nodes."
         record_fail "Node-Status"
     fi
+
+
+    # We should check if the Longhorn node has the EvictionRequested flag. If setted to true, will cause a Race Condition.
+    # For more info, see https://github.com/harvester/harvester/issues/7717
+    log_info "Verifying Longhorn node and disk eviction status..."
+    evacuation_found=false
+    for node in $(kubectl get nodes.longhorn.io -n longhorn-system -o jsonpath='{.items[*].metadata.name}'); do
+        node_eviction_requested=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o jsonpath='{.spec.evictionRequested}')
+
+        if [ "$node_eviction_requested" = "true" ]; then
+            log_error "Node '$node' has EvictionRequested set to true."
+            evacuation_found=true
+        fi
+
+        disks_with_eviction=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o yaml | yq e '.spec.disks | to_entries | .[] | select(.value.evictionRequested == true) | .key')
+        
+        if [ -z "$disks_with_eviction"]; then
+            log_info "No disks with eviction requested were found on node $node.."
+        else
+            log_error "The following disks have 'evictionRequetested' set to 'true' on node $node.:"
+            echo "$disks_with_eviction"
+            evacuation_found=true
+        fi
+    done
+
+    if [ "$evacuation_found" = "false" ]; then
+        log_info "No nodes or disks with EvictionRequested=true found. It is safe to proceed with the upgrade."
+    else
+        echo "Error: One or more nodes or disks have EvictionRequested set to true. Please resolve this before upgrading."
+        exit 1
+    fi
+
+    
 }
 
 check_cluster()
