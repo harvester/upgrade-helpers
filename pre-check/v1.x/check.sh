@@ -40,6 +40,51 @@ done
 check_failed=0
 failed_check_name=''
 
+HARVESTER_CLUSTER_VERSION=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value') 
+echo "Upgrading from version $HARVESTER_CLUSTER_VERSION"
+
+# Check if version is empty 
+if [[ -z "$HARVESTER_CLUSTER_VERSION" ]]; then 
+    log_error "Failed to retrieve server version. Exiting script check..." 
+    echo -e "\n==============================\n" 
+    return 
+fi 
+
+
+# Function necessary for version 1.4 of harvester cluster currently...
+# We should check if the Longhorn node has the EvictionRequested flag. If setted to true, will cause a Race Condition.
+# For more info, see https://github.com/harvester/harvester/issues/7717
+check_longhorn_eviction_status() {
+
+    log_info "Verifying Longhorn node and disk eviction status..."
+    evacuation_found=false
+    for node in $(kubectl get nodes.longhorn.io -n longhorn-system -o jsonpath='{.items[*].metadata.name}'); do
+        node_eviction_requested=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o jsonpath='{.spec.evictionRequested}')
+
+        if [ "$node_eviction_requested" = "true" ]; then
+            log_error "Node '$node' has EvictionRequested set to true."
+            evacuation_found=true
+        fi
+
+        disks_with_eviction=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o yaml | yq e '.spec.disks | to_entries | .[] | select(.value.evictionRequested == true) | .key')
+        
+        if [ -z "$disks_with_eviction"]; then
+            log_info "No disks with eviction requested were found on node $node.."
+        else
+            log_error "The following disks have 'evictionRequetested' set to 'true' on node $node.:"
+            echo "$disks_with_eviction"
+            evacuation_found=true
+        fi
+    done
+
+    if [ "$evacuation_found" = "false" ]; then
+        log_info "No nodes or disks with EvictionRequested=true found. It is safe to proceed with the upgrade."
+    else
+        echo "Error: One or more nodes or disks have EvictionRequested set to true. Please resolve this before upgrading."
+        exit 1
+    fi
+}
+
 record_fail()
 {
     check_failed=$((check_failed+1))
@@ -163,38 +208,14 @@ check_nodes()
     fi
 
 
-    # We should check if the Longhorn node has the EvictionRequested flag. If setted to true, will cause a Race Condition.
-    # For more info, see https://github.com/harvester/harvester/issues/7717
-    log_info "Verifying Longhorn node and disk eviction status..."
-    evacuation_found=false
-    for node in $(kubectl get nodes.longhorn.io -n longhorn-system -o jsonpath='{.items[*].metadata.name}'); do
-        node_eviction_requested=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o jsonpath='{.spec.evictionRequested}')
-
-        if [ "$node_eviction_requested" = "true" ]; then
-            log_error "Node '$node' has EvictionRequested set to true."
-            evacuation_found=true
-        fi
-
-        disks_with_eviction=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o yaml | yq e '.spec.disks | to_entries | .[] | select(.value.evictionRequested == true) | .key')
-        
-        if [ -z "$disks_with_eviction"]; then
-            log_info "No disks with eviction requested were found on node $node.."
-        else
-            log_error "The following disks have 'evictionRequetested' set to 'true' on node $node.:"
-            echo "$disks_with_eviction"
-            evacuation_found=true
-        fi
-    done
-
-    if [ "$evacuation_found" = "false" ]; then
-        log_info "No nodes or disks with EvictionRequested=true found. It is safe to proceed with the upgrade."
-    else
-        echo "Error: One or more nodes or disks have EvictionRequested set to true. Please resolve this before upgrading."
-        exit 1
-    fi
+    # If version is before v1.4.x, print a message and return 
+    if [[ $harvester_cluster_version =~ ^v(1.4)\..* ]]; then 
+        check_longhorn_eviction_status
+    fi 
 
     
 }
+
 
 check_cluster()
 {
@@ -626,17 +647,8 @@ check_images()
 {
     log_info "Starting Longhorn Backing Images check..."
 
-    version=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value')
-
-    # Check if version is empty
-    if [[ -z "$version" ]]; then
-        log_error "Failed to retrieve server version. Exiting Longhorn Backing Images check."
-        log_info "Longhorn-Backing-Images Test: Skipped"
-        echo -e "\n==============================\n"
-        return
-    fi
     # If version is before v1.4.x, print a message and return
-    if [[ $version =~ ^v(1\.[0-3])\..* ]]; then
+    if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1\.[0-3])\..* ]]; then
         log_info "Current version ($version) is before v1.4.x. This check is not applicable."
         log_info "Longhorn-Backing-Images Test: Skipped"
         echo -e "\n==============================\n"
