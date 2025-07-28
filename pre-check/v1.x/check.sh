@@ -422,59 +422,36 @@ check_free_space()
 {
     log_info "Starting Node Free Space check..."
 
-    # Get all secrets in the cattle-system namespace and filter the first one with "generateName: rancher-token-"
-    secret=$(kubectl get secrets -n cattle-system -o yaml | yq '.items[] | select(.metadata.generateName == "rancher-token-") | .data.token' | head -n 1)
+    # Counter for the number of nodes without enough disk space
+    disk_space_state=0
 
-    if [[ -z "$secret" ]]; then
-        log_info "WARN: The script wasn't able to find a valid rancher-token secret, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
-        log_info "Node-Free-Space Test: SKIPPED"
-        echo -e "\n==============================\n"
-        return
-    fi
+    for node_name in $(kubectl get nodes -o custom-columns=NAME:.metadata.name --no-headers); do
+        log_verbose "Checking node: ${node_name}"
 
-    token=$(echo "$secret" | base64 -d)
+        # Get node filesystem stats via kubelet
+        stat_summary=$(kubectl get --raw "/api/v1/nodes/${node_name}/proxy/stats/summary" | jq .node.fs )
+        used_bytes=$(echo "$stat_summary" | jq '.usedBytes')
+        capacity_bytes=$(echo "$stat_summary" | jq '.capacityBytes')
 
-    # Use a file to store the disk space state becuase we can't set the global variable inside the piped scope
-    # The file is removed in the piped scope if there are any node without enough disk space.
-    disk_space_state=$(mktemp)
+        if [ -z "$used_bytes" ] || [ -z "$capacity_bytes" ]; then
+            log_info "WARN: The script wasn't able to get valid response from the API for the node ${node_name}, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
+            continue
+        fi
 
-    # For each running engine and its volume
-    kubectl get nodes -o json |
-        jq -r '.items | map(.metadata.name + " " + (.metadata.annotations["rke2.io/internal-ip"] // "null") + " " + (.status.daemonEndpoints.kubeletEndpoint.Port | tostring)) | .[]' | {
-            while read -r node_name node_ip kubelet_port; do
-                log_verbose "Checking node: ${node_name} with IP: ${node_ip} and Kubelet Port: ${kubelet_port}"
+        # New images usage will be around 13GB (13 * 1024 * 1024 * 1024 bytes).
+        # If used space + 13GB is more than 85% of the capacity, then the node doesn't have enough free space.
+        if awk -v used="$used_bytes" -v cap="$capacity_bytes" 'BEGIN {exit !(((used + 13958643712) / cap) > 0.85)}'; then
+            log_info "Node \"${node_name}\" doesn't have enough free space."
+            log_info "Used: $(awk -v used="$used_bytes" 'BEGIN {printf "%.2f", used/1024/1024/1024}') GB"
+            log_info "Capacity: $(awk -v cap="$capacity_bytes" 'BEGIN {printf "%.2f", cap/1024/1024/1024}') GB"
+            (( disk_space_state++ ))
+        fi
+    done
 
-                # Skip the test if the variable is empty or literal "null"
-                if [[ -z "$node_ip" ||  "$node_ip" == "null" || -z "$kubelet_port" ]]; then
-                    log_info "WARN: The script wasn't able to find a valid IP/Port for the node ${node_name}, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
-                    continue
-                fi
-
-                stat_summary=$(curl -sk https://${node_ip}:${kubelet_port}/stats/summary -H "Authorization: Bearer ${token}" | jq .node.fs)
-                used_bytes=$(echo "$stat_summary" | jq '.usedBytes')
-                capacity_bytes=$(echo "$stat_summary" | jq '.capacityBytes')
-
-                if [ -z "$used_bytes" ] || [ -z "$capacity_bytes" ]; then
-                    log_info "WARN: The script wasn't able to get valid response from the API for the node ${node_name}, so it could not validate that there is sufficent freespace to complete the upgrade. To verify this test manually, log into each of the nodes and run 'df -h /usr/local' to ensure there's more than 30 GB of free space available."
-                    continue
-                fi
-
-                # New images usage will be around 13GB (13 * 1024 * 1024 * 1024 bytes).
-                # If used space + 13GB is more than 85% of the capacity, then the node doesn't have enough free space.
-                if awk -v used="$used_bytes" -v cap="$capacity_bytes" 'BEGIN {exit !(((used + 13958643712) / cap) > 0.85)}'; then
-                    log_info "Node ${node_name} doesn't have enough free space."
-                    log_info "Used: $(awk -v used="$used_bytes" 'BEGIN {printf "%.2f", used/1024/1024/1024}') GB"
-                    log_info "Capacity: $(awk -v cap="$capacity_bytes" 'BEGIN {printf "%.2f", cap/1024/1024/1024}') GB"
-                    rm -f $disk_space_state
-                fi
-            done
-        }
-
-    if [ -e "$disk_space_state" ]; then
+    if [[ ${disk_space_state} -eq 0 ]]; then
         log_verbose "All nodes have enough free space to load new images."
         log_info "Node-Free-Space Test: Pass"
         echo -e "\n==============================\n"
-        rm $disk_space_state
     else
         log_info "There are nodes without enough free space to load new images!"
         record_fail "Node-Free-Space"
