@@ -175,13 +175,33 @@ check_nodes()
         rm -f $node_ready_state
     fi
 
-    # nodes should not be tainted
-    tainted=$(echo "$nodes" | yq '.items | any_c(.spec.taints != null)')
-    if [ "$tainted" = "true" ]; then
-        log_info "There are tainted nodes:"
-        log_info "$(echo "$nodes" | yq '.items[] | select(.spec.taints != null)  | .metadata.name')"
-        rm -f $node_ready_state
-    fi
+    # we should validate every node to see if it is a witness node
+    witness_amount=0
+    for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+        witness_annotation=$(kubectl get node "$node_name" -o json | jq -r '.metadata.labels."node-role.harvesterhci.io/witness"')
+        if [ "$witness_annotation" = "true" ]; then
+            ((witness_amount++))
+
+            # validate if there are at most 1 witness node
+            if [[ "$witness_amount" -gt 1 ]]; then
+                echo "There are more than 1 witness node. Must have at most 1."
+                rm -f $node_ready_state
+            fi
+
+            echo "There are witness nodes in your cluster."
+
+            # witness node MUST have the etcd:NoExecute taint
+            has_taint=$(kubectl get node $(echo $node_name) -o json \
+            | jq '[.spec.taints[] | select(.key == "node-role.kubernetes.io/etcd" and .value == "true" and .effect == "NoExecute")] | length')
+
+            if [ "$has_taint" -gt 0  ]; then
+                echo "Witness node has the etcd:NoExecute taint."
+            else
+                echo "ERROR: Witness node $node_name does NOT have the etcd:NoExecute taint."
+                rm -f $node_ready_state
+            fi
+        fi
+    done
 
     # nodes should be ready
     echo "$nodes" | yq .items[].metadata.name |
