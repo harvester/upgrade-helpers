@@ -392,15 +392,15 @@ check_attached_volumes()
                 continue
             fi
 
-            # check .status.kubernetesStatus.workloadStatus has non-running workload. e.g.,
+            # check .status.kubernetesStatus.workloadStatus workloads are not running. e.g.,
             # workloadsStatus:
             #   - podName: virt-launcher-ubuntu-h9cfq
             #     podStatus: Succeeded
             #     workloadName: ubuntu
             #     workloadType: VirtualMachineInstance
-            is_stale=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus != "Running")')
-            if [ "$is_stale" = "true" ]; then
-                log_info "Volume ${vol_name} is attached, but one or more of its workloads is not running."
+            has_running_pod=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus == "Running")')
+            if [ "$has_running_pod" = "false" ]; then
+                log_info "Volume ${vol_name} is attached, but none of its workloads are running."
                 log_verbose "Details of the workloads:\n$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus')"
                 rm -f $clean_state
             fi
