@@ -393,6 +393,24 @@ check_attached_volumes()
             fi
 
             # check .status.kubernetesStatus.workloadStatus workloads are not running.
+            # e.g. after a VM live migration, you'll see two workloads: the source pod (Succeeded)
+            # and the new pod (Running). In this case, the attached volume is NOT stale.
+            # kubernetesStatus:
+            #     lastPVCRefAt: ""
+            #     lastPodRefAt: ""
+            #     namespace: default
+            #     pvName: pvc-aa236e02-f114-48f9-897f-6016b5c3b61b
+            #     pvStatus: Bound
+            #     pvcName: test-disk-0-4soco
+            #     workloadsStatus:
+            #     - podName: virt-launcher-test-hxjtm
+            #     podStatus: Succeeded
+            #     workloadName: test
+            #     workloadType: VirtualMachineInstance
+            #     - podName: virt-launcher-test-qtcmt
+            #     podStatus: Running
+            #     workloadName: test
+            #     workloadType: VirtualMachineInstance
             has_running_pod=$(kubectl get volumes.longhorn.io/$vol_name -n $vol_namespace -o yaml | yq '.status.kubernetesStatus.workloadsStatus | any_c(.podStatus == "Running")')
             if [ "$has_running_pod" = "false" ]; then
                 log_info "Volume ${vol_name} is attached, but none of its workloads are running."
