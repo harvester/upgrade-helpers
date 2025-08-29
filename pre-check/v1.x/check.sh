@@ -70,15 +70,15 @@ log_info()
 }
 
 
-HARVESTER_CLUSTER_VERSION=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value') 
+HARVESTER_CLUSTER_VERSION=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value')
 echo "Upgrading from version $HARVESTER_CLUSTER_VERSION"
 
-# Check if version is empty 
-if [[ -z "$HARVESTER_CLUSTER_VERSION" ]]; then 
-    echo "Failed to retrieve server version. Exiting script check..." 
-    echo -e "\n==============================\n" 
-    return 
-fi 
+# Check if version is empty
+if [[ -z "$HARVESTER_CLUSTER_VERSION" ]]; then
+    echo "Failed to retrieve server version. Exiting script check..."
+    echo -e "\n==============================\n"
+    return
+fi
 
 
 # Function necessary for version 1.4 of harvester cluster currently...
@@ -97,7 +97,7 @@ check_longhorn_eviction_status() {
         fi
 
         disks_with_eviction=$(kubectl get nodes.longhorn.io -n longhorn-system "$node" -o yaml | yq e '.spec.disks | to_entries | .[] | select(.value.evictionRequested == true) | .key')
-        
+
         if [[ -n "$disks_with_eviction" ]]; then
             echo "ERROR: The following disks have 'evictionRequetested' set to 'true' on node $node.:"
             echo "$disks_with_eviction"
@@ -225,11 +225,11 @@ check_nodes()
 
 
     # If version is 1.4.x, validate the Longhorn Eviction Requested status
-    if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.4)\..* ]]; then 
+    if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.4)\..* ]]; then
         check_longhorn_eviction_status
-    fi 
+    fi
 
-    
+
 }
 
 
@@ -647,7 +647,7 @@ check_backup_target()
     echo -e "\n==============================\n"
 }
 
-# This throws a warning if the minimum number of copies for a backing image is less than the default (3) 
+# This throws a warning if the minimum number of copies for a backing image is less than the default (3)
 # Or if the minimum number of copies is set to '0' - it fails the test. VMs won't start if the backing image isn't available after upgrade.
 check_images()
 {
@@ -683,6 +683,36 @@ check_images()
     fi
 }
 
+check_virtual_machines_live_migration()
+{
+    log_info "Starting Virtual Machines Live Migration check..."
+
+    restore_vm=$(kubectl get settings.harvesterhci.io upgrade-config -o json | jq -r '(.value // "{}") | fromjson | .restoreVM // false')
+
+    vms=$(kubectl get vm -A -o yaml)
+
+    vmWithCDROM=$(echo "$vms" | yq '.items[] | select(.status.printableStatus != "Stopped" and .spec.template.spec.domain.devices.disks[]? | has("cdrom")) | .metadata.namespace + "/" + .metadata.name')
+    if [ -n "$vmWithCDROM" ] && [ "$restore_vm" == "false" ]; then
+        log_info "Found running VMs with CDROM disks:"
+        log_info "$vmWithCDROM"
+        log_info "VMs with CDROM disks may cause issues during upgrade. Consider enable restoreVM in upgrade-config setting (https://docs.harvesterhci.io/v1.6/advanced/index/#upgrade-config) before upgrading."
+        record_fail "Virtual-Machines"
+        return
+    fi
+
+    vmWithHostDevices=$(echo "$vms" | yq '.items[] | select(.status.printableStatus != "Stopped" and .spec.template.spec.domain.devices.hostDevices[]? | .metadata.namespace + "/" + .metadata.name)')
+    if [ -n "$vmWithHostDevices" ] && [ "$restore_vm" == "false" ]; then
+        log_info "Found running VMs with Host Devices:"
+        log_info "$vmWithHostDevices"
+        log_info "VMs with Host Devices may cause issues during upgrade. Consider enable restoreVM in upgrade-config setting (https://docs.harvesterhci.io/v1.6/advanced/index/#upgrade-config) before upgrading."
+        record_fail "Virtual-Machines"
+        return
+    fi
+
+    log_info "Virtual Machines Test: Pass"
+    echo -e "\n==============================\n"
+}
+
 
 check_log_file
 
@@ -699,6 +729,7 @@ check_machines
 check_volumes
 check_attached_volumes
 check_images
+check_virtual_machines_live_migration
 check_error_pods
 check_kubeconfig_secret
 check_backup_target
