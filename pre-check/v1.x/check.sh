@@ -575,7 +575,7 @@ check_certs()
     # Set this to "false"
     expired_certs=1
     # Get a list of all the RKE certs.
-    certs_list=$(find /var/lib/rancher/rke2/server/tls/ -name *.crt)
+    certs_list=$(find /var/lib/rancher/rke2/server/tls/ -name "*.crt")
     log_verbose "Found the following certs: ${certs_list}"
     if [[ -z ${certs_list} ]]; then
         log_info "WARN: No certs found to be checked. Are you sure you're on a CP node?"
