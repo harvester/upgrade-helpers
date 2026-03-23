@@ -1,0 +1,4 @@
+# v1.8.0 is not released, this file is manually made
+# those images were used by v1.7.* and also unsed by v1.8.0
+# they can't be purged from the running cluster
+vmdp:2.5.5
