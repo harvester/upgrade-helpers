@@ -713,6 +713,161 @@ check_virtual_machines_live_migration()
     echo -e "\n==============================\n"
 }
 
+# Needed to verify migration from wicked to NetworkManager will work.
+# Only applicable when upgrading from v1.6.x to v1.7.x
+check_network_config()
+{
+    log_info "Starting network config check..."
+    local timeout_limit=300 # 5 minutes in seconds
+
+    # need 'EOF' in single quotes here to avoid variable expansion
+    kubectl apply -f - >/dev/null << 'EOF'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: upgrade-helper-network-check
+  namespace: harvester-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: upgrade-helper-network-check
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: upgrade-helper-network-check
+    spec:
+      tolerations:
+        # Ensure the validator runs on master nodes
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        # Ensure the validator runs on witness nodes
+        - effect: NoExecute
+          operator: Exists
+      terminationGracePeriodSeconds: 1
+      initContainers:
+      - name: validator
+        # this image will already exist on harvester v1.6.x hosts
+        image: registry.suse.com/bci/bci-base:15.6
+        command:
+        - bash
+        - -c
+        - |
+          error_trap() {
+            echo "FATAL: $NODE_NAME: Script aborted on line $1"
+            exit 1
+          }
+          trap 'error_trap $LINENO' ERR
+          set -o pipefail
+
+          if [ ! -e "/oem/90_custom.yaml" ]; then
+            if [ -e "/oem/99_custom.yaml" ]; then
+              # this can happen with systems that were originally install with harvester v1.0
+              echo "ERROR: $NODE_NAME: /oem/99_custom.yaml must be renamed to /oem/90_custom.yaml"
+            else
+              echo "ERROR: $NODE_NAME: /oem/90_custom.yaml does not exist"
+            fi
+          fi
+
+          if [ ! -e "/oem/harvester.config" ]; then
+            # this should never happen
+            echo "ERROR: $NODE_NAME: /oem/harvester.config does not exist"
+          else
+            if [ -n "$(yq '.install.networks // ""' /oem/harvester.config)" ] ; then
+              # this can happen with systems that were originally installed with harvester v1.0
+              echo "ERROR: $NODE_NAME: /oem/harvester.config uses old v1.0 schema for management interface config"
+            elif [ -z "$(yq '.install.managementinterface // ""' /oem/harvester.config)" ] &&
+                 [ -z "$(yq '.install.management_interface // ""' /oem/harvester.config)" ]; then
+              # ".install.managementinterface" and ".install.management_interface" are both valid
+              # (the one without the underscore is what harvester-installer will write to disk,
+              # but the one with the underscore is what's in our docs, so need to allow both
+              # to accommodate possible manual edits)
+              echo "ERROR: $NODE_NAME: /oem/harvester.config is missing management interface config"
+            fi
+          fi
+          echo "RESULT: $NODE_NAME: Validation completed."
+        env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /oem
+          name: oem
+          readOnly: true
+        - mountPath: /usr/bin/yq
+          name: usr-bin-yq
+          readOnly: true
+      containers:
+      - name: sleep
+        image: registry.suse.com/bci/bci-base:15.6
+        command: ['sleep', 'infinity']
+      volumes:
+        - name: oem
+          hostPath:
+            path: /oem
+            type: Directory
+        - name: usr-bin-yq
+          hostPath:
+            path: /usr/bin/yq
+            type: File
+EOF
+
+    # --- Wait for DaemonSet to be created ---
+    local start_time=$SECONDS
+    until kubectl -n harvester-system get daemonset/upgrade-helper-network-check >/dev/null 2>&1; do
+        if (( SECONDS - start_time > timeout_limit )); then
+            log_error "Timeout: DaemonSet was never created."
+            return 1
+        fi
+        sleep 2
+    done
+
+    # --- Wait for Completion on all nodes ---
+    start_time=$SECONDS
+    log_info "Waiting for validator to finish on all nodes..."
+    while true ; do
+        local status=$(kubectl -n harvester-system get daemonset/upgrade-helper-network-check -o json 2>/dev/null)
+        local desired=$(echo "$status" | jq -r '.status.desiredNumberScheduled // 0')
+        local ready=$(echo "$status" | jq -r '.status.numberReady // 0')
+
+        if [[ "$desired" -gt 0 && "$desired" -eq "$ready" ]]; then
+            break
+        fi
+
+        if (( SECONDS - start_time > timeout_limit )); then
+            log_error "Timeout: Validator did not complete on all nodes within 5 minutes."
+            # We don't return yet so we can fetch logs from the nodes that DID finish
+            break
+        fi
+        sleep 5
+    done
+
+    # --- Fetch and Analyze Logs ---
+    local validator_logs=$(kubectl -n harvester-system logs -l app.kubernetes.io/name=upgrade-helper-network-check -c validator --all-pods --prefix --tail=-1 2>&1)
+
+    # Cleanup immediately
+    kubectl -n harvester-system delete daemonset/upgrade-helper-network-check --wait=false >/dev/null 2>&1
+
+    # Check for failure keywords
+    if echo "$validator_logs" | grep -Ei "ERROR|FATAL" >/dev/null; then
+        log_info "Network Config Check FAILED:"
+        log_info "$validator_logs"
+        record_fail "Network-Config"
+        return 1
+    fi
+
+    # Ensure we actually got some "RESULT" success messages
+    if ! echo "$validator_logs" | grep -q "RESULT:"; then
+        log_error "Network Config Check failed to produce any results (possible timeout or scheduling issue)."
+        log_info "Raw logs: $validator_logs"
+        return 1
+    fi
+
+    log_info "Network Config Check: Pass"
+    echo -e "\n==============================\n"
+}
 
 check_log_file
 
@@ -733,6 +888,10 @@ check_virtual_machines_live_migration
 check_error_pods
 check_kubeconfig_secret
 check_backup_target
+
+if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.6)\..* ]]; then
+    check_network_config
+fi
 
 if [ $check_failed -gt 0 ]; then
     log_info "WARN: There are $check_failed failing checks:${failed_check_names}"
