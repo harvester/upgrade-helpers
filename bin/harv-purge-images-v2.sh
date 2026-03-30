@@ -85,6 +85,9 @@ get_avail_kb() {
 }
 
 log_cri_disk_usage() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    return 0
+  fi
   local label=$1
   echo -e "${BLUE}--- Disk Usage: $label ---${NC}"
   df -h /usr/local
@@ -127,74 +130,90 @@ generate_kill_list() {
   local images_list="$2"
   local debug_mode="$3"
 
-  grep -vE '^\s*(#|$)' "$images_list" | jq -R -r --slurpfile snap "$snapshot" --arg dbg "$debug_mode" '
-    ( [ inputs | select(length > 0) | { (.): true } ] | add // {} ) as $purge_map |
-    ( if $dbg == "true" then ("DEBUG: Purge Map Generated: " + ($purge_map | tojson) | stderr) else empty end ) |
-    $snap[0].images[] |
-    select(.pinned != true) |
-    . as $img |
-    if ($img.repoTags | length == 0) or ($img.repoTags == null) then
-      "\($img.id)|<dangling/ghost>"
+  # Step A: Create a simple flat file of "short" tags to purge
+  local purge_tags="$TMP_DIR/purge_tags.txt"
+  grep -vE '^\s*(#|$)' "$images_list" | sed 's/\r//g' | awk -F'/' '{print $NF}' | sort -u > "$purge_tags"
+
+  if [[ "$debug_mode" == "true" ]]; then
+     echo -e "${MAGENTA}[DEBUG] Purge List unique count: $(wc -l < "$purge_tags")${NC}" >&2
+  fi
+
+  # Step B: Extract all local images into a flat ID|Tag format
+  # We handle named images and dangling images separately for speed
+  local local_images="$TMP_DIR/local_images.txt"
+  jq -r '.images[] | select(.pinned != true) | . as $img |
+    if (.repoTags | length > 0) then
+      .repoTags[] | "\($img.id)|\(.)"
     else
-      $img.repoTags[] | . as $full_tag |
-      ($full_tag | split("/") | last) as $short_tag |
-      ( if $dbg == "true" then ("DEBUG: Checking " + $full_tag + " (as " + $short_tag + ")" | stderr) else empty end ) |
-      if $purge_map[$short_tag] then
-        "\($img.id)|\($full_tag)"
-      else
-        empty
-      end
-    end
-  '
+      "\($img.id)|<dangling/ghost>"
+    end' "$snapshot" > "$local_images"
+
+  # Step C: The actual matching logic
+  # 1. Always include dangling/ghost images
+  grep "|<dangling/ghost>" "$local_images" || true
+
+  # 2. Match named images against our purge list
+  # We use awk to check if the 'name:tag' part of the local image exists in our purge list
+  awk -F'|' 'NR==FNR{a[$1];next} {
+    split($2, parts, "/");
+    short=parts[length(parts)];
+    if (short in a) print $0
+  }' "$purge_tags" "$local_images"
 }
 
 cleanup_images() {
   local dry_run=$1
   local images_list=$2
 
-  echo -e "${GREEN}>>> UPGRADE IMAGE CLEANUP START${NC}"
+  echo -e "${GREEN}>>> IMAGE CLEANUP START${NC}"
+
+  # --- Disk Usage Tracking ---
   local start_kb=$(get_avail_kb)
   log_cri_disk_usage "BEFORE"
+  # ----------------------------------
 
   local snapshot="$TMP_DIR/crictl_snap.json"
+  # Capture snapshot once
   if ! "$CRICTL" images -o json > "$snapshot" 2>/dev/null; then
     echo -e "${RED}[ERROR] $CRICTL is unresponsive.${NC}"
     return 1
   fi
 
-  if [[ "$DEBUG" == "true" ]]; then
-    echo -e "${MAGENTA}[DEBUG] Full crictl image snapshot:${NC}"
-    jq '.' "$snapshot"
-  fi
+  echo -e "${YELLOW}>>> Analyzing system images ...${NC}"
 
-  echo -e "\n${YELLOW}>>> Analyzing system images ...${NC}"
+  # Run the generator and save to file
+  local kill_file="$TMP_DIR/final_kill.list"
+  generate_kill_list "$snapshot" "$images_list" "$DEBUG" > "$kill_file"
+
   local ids_to_kill=()
-
+  # Process the results
   while IFS='|' read -r img_id img_tag; do
     [[ -z "$img_id" ]] && continue
     ids_to_kill+=("$img_id")
+
     if [[ "$dry_run" == "true" ]]; then
       echo -e "  ${BLUE}[DRY-RUN]${NC} Would remove: $img_tag ($img_id)"
     else
-      echo -e "  ${RED}[TARGET]${NC} $img_tag"
+      echo -e "  ${RED}[TARGET]${NC} $img_tag ($img_id)"
     fi
-  done < <(generate_kill_list "$snapshot" "$images_list" "$DEBUG")
+  done < <(sort -u "$kill_file")
 
   if [[ ${#ids_to_kill[@]} -gt 0 ]]; then
     if [[ "$dry_run" == "true" ]]; then
-      echo -e "\n${YELLOW}[DRY-RUN] Analysis complete. Found ${#ids_to_kill[@]} images to purge.${NC}"
+      echo -e "\n${YELLOW}[DRY-RUN] Found ${#ids_to_kill[@]} unique images to purge.${NC}"
     else
-      echo -e "\n${GREEN}[ACTION] Executing batch removal of ${#ids_to_kill[@]} images...${NC}"
-      if ! "$CRICTL" rmi "${ids_to_kill[@]}" >/dev/null 2>&1; then
-        echo -e "  ${YELLOW}[NOTE] Some images skipped (likely in use).${NC}"
-      fi
+      echo -e "\n${GREEN}[ACTION] Removing ${#ids_to_kill[@]} images...${NC}"
+      # Chunk the IDs to prevent "Argument list too long" if there are hundreds
+      echo "${ids_to_kill[@]}" | xargs -n 50 "$CRICTL" rmi >/dev/null 2>&1 || true
     fi
   else
-    echo -e "  ${GREEN}[INFO] No images match purge criteria.${NC}"
+    echo -e "  ${GREEN}[INFO] Nothing to do, no images match purge criteria.${NC}"
   fi
 
+# --- ADDED: After Report ---
   local end_kb=$(get_avail_kb)
   local diff_mb=$(( (end_kb - start_kb) / 1024 ))
+
   echo ""
   log_cri_disk_usage "AFTER"
 
@@ -203,7 +222,9 @@ cleanup_images() {
     echo -e "RECLAIMED SPACE: ${diff_mb} MB"
     echo -e "----------------------------------------------${NC}"
   fi
-  echo -e "${GREEN}>>> UPGRADE IMAGE CLEANUP FINISHED${NC}"
+  # ---------------------------
+
+  echo -e "${GREEN}>>> IMAGE CLEANUP FINISHED${NC}"
 }
 
 prepare_images_list() {
