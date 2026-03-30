@@ -136,6 +136,13 @@ run_arch_pipeline()
   local past_raw="$arch_tmp/past-raw.txt"
   touch "$target_raw" "$past_raw"
 
+  # Check if the target version exists in the versions.yaml
+  if [[ $(yq -r '.versions.active[]' "$VERSIONS_FILE" | grep -xc "$TARGET_VERSION") -eq 0 ]]; then
+    echo "Error: Target version '$TARGET_VERSION' not found in $VERSIONS_FILE active list." >&2
+    echo "Available versions: $(yq -r '.versions.active | join(", ")' "$VERSIONS_FILE")" >&2
+    exit 1
+  fi
+
   echo "--- Starting Pipeline for Architecture: $arch ---"
 
   # 1. Collect Target Data
@@ -153,6 +160,9 @@ run_arch_pipeline()
   # 2. Collect Past Data
   local past_versions=$(yq -r ".versions.active | (to_entries | .[] | select(.value == \"$TARGET_VERSION\") | .key) as \$idx | .[(\$idx + 1):] | .[]" "$VERSIONS_FILE")
   
+  # Convert the newline-separated versions into a comma-separated string for the header
+  local past_versions_list=$(echo "$past_versions" | tr '\n' ',' | sed 's/,$//')
+
   for v in $past_versions; do
     get_remote_tar_content "$v" "$arch" "$past_raw"
   done
@@ -169,11 +179,23 @@ run_arch_pipeline()
   mkdir -p "$output_dir"
   local final_output="$output_dir/$TARGET_VERSION-$arch-$TARGET_FILE_NAME"
 
+  # Create the file with header comments
+  {
+    echo "# Generated on: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "# Target Version: $TARGET_VERSION"
+    echo "# Architecture:   $arch"
+    echo "# Past Versions Analyzed: ${past_versions_list:-none}"
+    echo "# Logic: Images existing in past versions but no longer used in $TARGET_VERSION"
+    echo "# ------------------------------------------------------------------------------"
+  } > "$final_output"
+
+  # Append the actual diff data
+
   # Compare the combined past images against the target version images.
   # -2: Suppress lines appearing only in the target file (File 2).
   # -3: Suppress lines appearing in both files (common images).
   # Result: Only images that existed in the past but ARE NOT in the target version
-  LC_ALL=C comm -23 "$past_sorted" "$target_sorted" > "$final_output"
+  LC_ALL=C comm -23 "$past_sorted" "$target_sorted" >> "$final_output"
   
   echo "Done: $final_output contains $(wc -l < "$final_output") images to remove."
   echo "$final_output" >> "$TMP_DIR/summary_paths.txt"

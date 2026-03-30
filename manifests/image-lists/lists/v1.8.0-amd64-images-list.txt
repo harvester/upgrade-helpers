@@ -1,3 +1,9 @@
+# Generated on: 2026-03-30 19:03:50
+# Target Version: v1.8.0
+# Architecture:   amd64
+# Past Versions Analyzed: v1.7.1,v1.7.0,v1.6.1,v1.6.0,v1.5.1,v1.5.0,v1.4.1,v1.4.0,v1.3.2,v1.3.1,v1.3.0
+# Logic: Images existing in past versions but no longer used in v1.8.0
+# ------------------------------------------------------------------------------
 backing-image-manager:v1.10.1
 backing-image-manager:v1.10.2
 backing-image-manager:v1.6.0

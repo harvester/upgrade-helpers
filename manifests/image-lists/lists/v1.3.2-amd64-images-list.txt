@@ -1,3 +1,9 @@
+# Generated on: 2026-03-30 18:51:13
+# Target Version: v1.3.2
+# Architecture:   amd64
+# Past Versions Analyzed: v1.3.1,v1.3.0
+# Logic: Images existing in past versions but no longer used in v1.3.2
+# ------------------------------------------------------------------------------
 backing-image-manager:v1.6.0
 csi-attacher:v4.4.2
 csi-provisioner:v3.6.2

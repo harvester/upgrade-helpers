@@ -1,3 +1,9 @@
+# Generated on: 2026-03-30 18:51:39
+# Target Version: v1.4.0
+# Architecture:   amd64
+# Past Versions Analyzed: v1.3.2,v1.3.1,v1.3.0
+# Logic: Images existing in past versions but no longer used in v1.4.0
+# ------------------------------------------------------------------------------
 backing-image-manager:v1.6.0
 backing-image-manager:v1.6.2
 bci-base:15.5
