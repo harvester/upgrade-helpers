@@ -320,6 +320,26 @@ check_free_space()
     record_fail
 }
 
+check_nic_rename_grubenv()
+{
+    log_info "Starting NIC rename grubenv check (required before upgrading to v1.7.x)..."
+    log_verbose "NOTE: This only checks the current node. Run on all nodes before upgrading."
+
+    grubenv_args=$(grub2-editenv /oem/grubenv list 2>/dev/null | grep third_party_kernel_args || true)
+
+    if echo "$grubenv_args" | grep -q "ifname="; then
+        log_verbose "grubenv: $grubenv_args"
+        log_info "NIC-Rename-Grubenv Test: Pass"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    log_info "No ifname= entries found in grubenv third_party_kernel_args."
+    log_info "Upgrading to v1.7.x will rename the interfaces and break mgmt-bo."
+    log_info "Fix: https://docs.harvesterhci.io/v1.7/upgrade/v1-6-x-to-v1-7-x#3-persistent-names-of-certain-network-interfaces-may-change-during-upgrade"
+    record_fail "NIC-Rename-Grubenv"
+}
+
 check_bundles
 check_harvester_bundle
 check_nodes
@@ -330,6 +350,10 @@ check_volumes
 check_attached_volumes
 check_error_pods
 check_free_space
+
+if [[ $HARVESTER_CLUSTER_VERSION =~ ^v1\.[0-6]\..* ]]; then
+    check_nic_rename_grubenv
+fi
 
 if [ $check_failed -gt 0 ]; then
     echo ""
