@@ -33,7 +33,7 @@ usage()
 # ./generate-image-lists.sh --versions-file ./versions.yaml --target-harvester-version v1.7.0
 # ./generate-image-lists.sh --versions-file ./versions.yaml --target-harvester-version v1.7.0 --debug
 
-# when a new version is not available yet, add a local file and it will not fetch remote
+# when a new version is not available yet, add a local manual file to act as the target-version-images
 # ./generate-image-lists.sh --versions-file ./versions.yaml --target-harvester-version v1.8.0 --target-version-images ./v180-images-lists.txt
 
 parse_params()
