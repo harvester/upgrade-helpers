@@ -133,7 +133,7 @@ filter_exceptions() {
   local exceptions=$(yq -r '.exceptions.images[]' "$VERSIONS_FILE" 2>/dev/null)
 
   if [[ -z "$exceptions" || "$exceptions" == "null" ]]; then
-    echo "no exception images, skip filtering" >& 2
+    echo "no exception images, skip filtering" >&2
     return
   fi
 
@@ -262,7 +262,7 @@ main()
   echo "========================================================="
   if [[ -f "$TMP_DIR/summary_paths.txt" ]]; then
     while read -r path; do
-      printf "File: %s | Images: %d\n" "$(basename "$path")" "$(wc -l < "$path")"
+      printf "File: %s | Images: %d\n" "$(basename "$path")" "$(grep -cvE '^#' "$path")"
     done < "$TMP_DIR/summary_paths.txt"
   fi
 }

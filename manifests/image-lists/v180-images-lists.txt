@@ -1,8 +1,8 @@
-# v1.8.0 is not released, this file is manually made
-# those images were used by both v1.7.* and v1.8.0
-# they can't be purged from the running cluster
-# when a image/tag e.g. harvester-webhook:v1.8.0 is added to v1.8.0 but not in v1.7.*
-# it is not necessary to be in this file
-# as the generated e.g. v1.8.0-amd64-images-list.txt is a to-kill list
-# even if they are in this list, they will be filtered from the final list
+# v1.8.0 is not released, so this file is maintained manually
+# these images were used by both v1.7.* and v1.8.0
+# and can't be purged from the running cluster
+# when an image tag, e.g. harvester-webhook:v1.8.0, is added to v1.8.0 but not to v1.7.*
+# it does not need to be included in this file
+# because the generated file, e.g. v1.8.0-amd64-images-list.txt, is a to-kill list
+# even if such images are in this list, they will be filtered from the final list
 vmdp:2.5.5
