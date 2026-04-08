@@ -126,6 +126,43 @@ get_remote_tar_content()
   fi
 }
 
+# some exception images need to be kept
+filter_exceptions() {
+  local target_file=$1
+
+  local exceptions=$(yq -r '.exceptions.images[]' "$VERSIONS_FILE" 2>/dev/null)
+
+  if [[ -z "$exceptions" || "$exceptions" == "null" ]]; then
+    echo "no exception images, skip filtering" >& 2
+    return
+  fi
+
+  local exceptions_list="$TMP_DIR/exceptions_list.txt"
+  echo "$exceptions" > "$exceptions_list"
+
+  local filtered_tmp="$TMP_DIR/filtered_output.txt"
+
+  # Preserve header comments
+  grep -E '^#' "$target_file" > "$filtered_tmp"
+
+  # -v: Invert (Remove these)
+  # -x: Exact line match (Full string only)
+  # -F: Fixed strings (Treats . and : as text, not regex)
+  # -f: Read patterns from the temp file
+  grep -vE '^#' "$target_file" | grep -vxFf "$exceptions_list" >> "$filtered_tmp"
+
+  # Calculate how many were filtered
+  local count_before=$(grep -cvE '^#' "$target_file")
+  local count_after=$(grep -cvE '^#' "$filtered_tmp")
+  local removed_count=$((count_before - count_after))
+
+  if [[ $removed_count -gt 0 ]]; then
+    echo "   -> Filtered $removed_count exception(s) from $(basename "$target_file")" >&2
+  fi
+
+  mv "$filtered_tmp" "$target_file"
+}
+
 run_arch_pipeline()
 {
   local arch=$1
@@ -196,8 +233,14 @@ run_arch_pipeline()
   # -3: Suppress lines appearing in both files (common images).
   # Result: Only images that existed in the past but ARE NOT in the target version
   LC_ALL=C comm -23 "$past_sorted" "$target_sorted" >> "$final_output"
+
+  # Apply the exceptions filter
+  filter_exceptions "$final_output"
+
+  # Count final images (excluding the # header lines)
+  local final_count=$(grep -cvE '^#' "$final_output")
   
-  echo "Done: $final_output contains $(wc -l < "$final_output") images to remove."
+  echo "Done: $final_output contains $final_count images to remove."
   echo "$final_output" >> "$TMP_DIR/summary_paths.txt"
 }
 
@@ -225,3 +268,4 @@ main()
 }
 
 main "$@"
+

@@ -1,4 +1,4 @@
-# Generated on: 2026-03-30 19:03:23
+# Generated on: 2026-04-08 11:02:13
 # Target Version: v1.7.1
 # Architecture:   amd64
 # Past Versions Analyzed: v1.7.0,v1.6.1,v1.6.0,v1.5.1,v1.5.0,v1.4.1,v1.4.0,v1.3.2,v1.3.1,v1.3.0
@@ -602,7 +602,6 @@ virt-operator:1.1.1-150500.8.18.1
 virt-operator:1.2.2-150500.8.21.1
 virt-operator:1.4.0-150600.5.15.1
 virt-operator:1.5.2-150700.3.5.2
-vmdp:2.5.4.2
 whereabouts:v0.6.3
 whereabouts:v0.7.0
 whereabouts:v0.8.0

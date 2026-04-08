@@ -13,3 +13,10 @@ versions:
     - "v1.3.2"
     - "v1.3.1"
     - "v1.3.0"
+exceptions:
+  # some images need be kept, e.g. vmdp is used by Windows VMs via container disk
+  # image:tag is treated as plain text, not regex
+  images:
+    - "vmdp:2.5.4.2"
+    - "vmdp:2.5.5"
+
