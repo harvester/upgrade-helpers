@@ -41,6 +41,8 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     >>> Check error pods...
     All pods are OK.
     All nodes have more than 30GB free space.
+    >>> Check control plane certificates...
+    Control plane certificates are valid and both kube-controller-manager and kube-scheduler health probes are reachable.
     
     All checks pass.
     ```
