@@ -326,62 +326,45 @@ check_free_space()
 }
 
 # https://github.com/rancher/rancher/issues/41125#issuecomment-1506620040
+check_cert()
+{
+    local name=$1
+    local cert=$2
+
+    echo ">>> Checking $name certificate..."
+
+    if [ ! -f "$cert" ]; then
+        echo "Certificate not found: $cert"
+        record_fail
+        return
+    fi
+
+    if ! openssl x509 -checkend 0 -noout -in "$cert"; then
+        echo "$name certificate is EXPIRED!"
+        record_fail
+        return
+    fi
+
+    end_date=$(openssl x509 -enddate -noout -in "$cert" | cut -d= -f2)
+    end_epoch=$(date -d "$end_date" +%s)
+    now_epoch=$(date +%s)
+
+    seconds_left=$((end_epoch - now_epoch))
+    days_left=$((seconds_left / 86400))
+
+    echo "$name certificate expires in $days_left days ($end_date)"
+
+    if [ $days_left -lt 7 ]; then
+        echo "WARNING: $name certificate expires in less than 7 days!"
+    fi
+}
+
 check_control_plane_certificates()
 {
     echo ">>> Check control plane certificates..."
 
-    failed_local=0
-
-    # kube-controller-manager probe
-    controller_ok=0
-    if curl --cacert /var/lib/rancher/rke2/server/tls/kube-controller-manager/kube-controller-manager.crt \
-        https://127.0.0.1:10257/healthz >/dev/null 2>&1; then
-        controller_ok=1
-    else
-        failed_local=1
-    fi
-
-    # kube-scheduler probe
-    scheduler_ok=0
-    if curl --cacert /var/lib/rancher/rke2/server/tls/kube-scheduler/kube-scheduler.crt \
-        https://127.0.0.1:10259/healthz >/dev/null 2>&1; then
-        scheduler_ok=1
-    else
-        failed_local=1
-    fi
-
-    # output
-    if [ $failed_local -eq 0 ]; then
-        echo "Control plane certificates are valid and both kube-controller-manager and kube-scheduler health probes are reachable."
-    else
-        echo "WARNING: One or more RKE2 control plane health probes are not reachable. This may indicate expired or invalid certificates, or unhealthy control plane components (kube-controller-manager / kube-scheduler). Please verify control plane health on all controller nodes using the following commands:
-
-(
-curl --cacert /var/lib/rancher/rke2/server/tls/kube-controller-manager/kube-controller-manager.crt \\
-  https://127.0.0.1:10257/healthz >/dev/null 2>&1 \\
-  && echo \"[OK] Kube Controller probe\" \\
-  || echo \"[FAIL] Kube Controller probe\";
-
-curl --cacert /var/lib/rancher/rke2/server/tls/kube-scheduler/kube-scheduler.crt \\
-  https://127.0.0.1:10259/healthz >/dev/null 2>&1 \\
-  && echo \"[OK] Scheduler probe\" \\
-  || echo \"[FAIL] Scheduler probe\";
-)
-
-If the issue persists, certificate rotation may be required:
-
-echo \"Rotating kube-controller-manager certificate\"
-rm /var/lib/rancher/rke2/server/tls/kube-controller-manager/kube-controller-manager.{crt,key}
-crictl rm -f \$(crictl ps -q --name kube-controller-manager)
-
-echo \"Rotating kube-scheduler certificate\"
-rm /var/lib/rancher/rke2/server/tls/kube-scheduler/kube-scheduler.{crt,key}
-crictl rm -f \$(crictl ps -q --name kube-scheduler)"
-    fi
-
-    if [ $failed_local -ne 0 ]; then
-        record_fail
-    fi
+    check_cert "kube-controller-manager" "/var/lib/rancher/rke2/server/tls/kube-controller-manager/kube-controller-manager.crt"
+    check_cert "kube-scheduler" "/var/lib/rancher/rke2/server/tls/kube-scheduler/kube-scheduler.crt"
 }
 
 check_bundles
