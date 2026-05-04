@@ -180,7 +180,7 @@ check_nodes()
     for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
         witness_annotation=$(kubectl get node "$node_name" -o json | jq -r '.metadata.labels."node-role.harvesterhci.io/witness"')
         if [ "$witness_annotation" = "true" ]; then
-            ((witness_amount++))
+            ((++witness_amount))
 
             # validate if there are at most 1 witness node
             if [[ "$witness_amount" -gt 1 ]]; then
@@ -477,7 +477,7 @@ check_free_space()
             log_info "Node \"${node_name}\" doesn't have enough free space."
             log_info "Used: $(awk -v used="$used_bytes" 'BEGIN {printf "%.2f", used/1024/1024/1024}') GB"
             log_info "Capacity: $(awk -v cap="$capacity_bytes" 'BEGIN {printf "%.2f", cap/1024/1024/1024}') GB"
-            (( disk_space_state++ ))
+            (( ++disk_space_state ))
         fi
     done
 
