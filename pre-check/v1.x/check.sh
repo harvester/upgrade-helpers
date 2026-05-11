@@ -80,6 +80,12 @@ if [[ -z "$HARVESTER_CLUSTER_VERSION" ]]; then
     return
 fi
 
+# Space-separated list of witness node names. Witness nodes carry the
+# etcd:NoExecute taint and are unschedulable for non-tolerating workloads, so
+# several health checks need to skip them to avoid false positives. Computed
+# once here and reused by check_nodes / check_error_pods.
+WITNESS_NODE_NAMES=$(kubectl get nodes -l node-role.harvesterhci.io/witness=true -o jsonpath='{.items[*].metadata.name}')
+
 
 # Function necessary for version 1.4 of harvester cluster currently...
 # We should check if the Longhorn node has the EvictionRequested flag. If setted to true, will cause a Race Condition.
@@ -203,9 +209,14 @@ check_nodes()
         fi
     done
 
-    # nodes should be ready
+    # nodes should be ready (skip witness — see witness validation above)
     echo "$nodes" | yq .items[].metadata.name |
         while read -r node_name; do
+            for wn in $WITNESS_NODE_NAMES; do
+                if [ "$node_name" = "$wn" ]; then
+                    continue 2
+                fi
+            done
             node_ready=$(kubectl get nodes $node_name -o yaml | yq '.status.conditions | any_c(.type == "Ready" and .status == "True")')
             if [ "$node_ready" = "false" ]; then
                 log_info "Node $node_name is not ready!"
@@ -435,8 +446,17 @@ check_error_pods()
 {
     log_info "Starting Pod Status check..."
 
+    # Witness nodes carry the etcd:NoExecute taint, so non-tolerating pods
+    # scheduled there are expected to be non-ready. Exclude them from the check.
+    exclude_witness=""
+    for wn in $WITNESS_NODE_NAMES; do
+        exclude_witness="${exclude_witness} and .spec.nodeName != \"${wn}\""
+    done
+
+    not_ready_filter="(.status.conditions | any_c(.type == \"Ready\" and .status == \"False\" and .reason != \"PodCompleted\"))${exclude_witness}"
+
     pods=$(kubectl get pods -A -o yaml)
-    no_ok=$(echo "$pods" | yq '.items[] | select(.status.conditions | any_c(.type == "Ready" and .status == "False" and .reason != "PodCompleted"))')
+    no_ok=$(echo "$pods" | yq ".items[] | select(${not_ready_filter})")
 
     if [ -z "$no_ok" ]; then
         log_verbose "All pods are OK."
@@ -446,7 +466,7 @@ check_error_pods()
     fi
 
     log_info "There are non-ready pods:"
-    log_info "$(echo "$pods" | yq '.items[] | select(.status.conditions | any_c(.type == "Ready" and .status == "False" and .reason != "PodCompleted")) | .metadata.namespace + "/" + .metadata.name')"
+    log_info "$(echo "$pods" | yq ".items[] | select(${not_ready_filter}) | .metadata.namespace + \"/\" + .metadata.name")"
     record_fail "Pod-Status"
 }
 
