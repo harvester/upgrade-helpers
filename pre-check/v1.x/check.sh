@@ -80,10 +80,9 @@ if [[ -z "$HARVESTER_CLUSTER_VERSION" ]]; then
     return
 fi
 
-# Space-separated list of witness node names. Witness nodes carry the
-# etcd:NoExecute taint and are unschedulable for non-tolerating workloads, so
-# several health checks need to skip them to avoid false positives. Computed
-# once here and reused by check_nodes / check_error_pods.
+# Space-separated list of witness node names. Used by check_error_pods to
+# decide whether a non-ready pod on the witness should fail the check (only
+# essential witness workloads do; other pods on the witness are ignored).
 WITNESS_NODE_NAMES=$(kubectl get nodes -l node-role.harvesterhci.io/witness=true -o jsonpath='{.items[*].metadata.name}')
 
 
@@ -209,14 +208,10 @@ check_nodes()
         fi
     done
 
-    # nodes should be ready (skip witness — see witness validation above)
+    # nodes should be ready (witness included — a non-ready witness means
+    # etcd is unhealthy and the upgrade must not start)
     echo "$nodes" | yq .items[].metadata.name |
         while read -r node_name; do
-            for wn in $WITNESS_NODE_NAMES; do
-                if [ "$node_name" = "$wn" ]; then
-                    continue 2
-                fi
-            done
             node_ready=$(kubectl get nodes $node_name -o yaml | yq '.status.conditions | any_c(.type == "Ready" and .status == "True")')
             if [ "$node_ready" = "false" ]; then
                 log_info "Node $node_name is not ready!"
@@ -446,19 +441,29 @@ check_error_pods()
 {
     log_info "Starting Pod Status check..."
 
-    # Witness nodes carry the etcd:NoExecute taint, so non-tolerating pods
-    # scheduled there are expected to be non-ready. Exclude them from the check.
-    exclude_witness=""
-    for wn in $WITNESS_NODE_NAMES; do
-        exclude_witness="${exclude_witness} and .spec.nodeName != \"${wn}\""
-    done
-
-    not_ready_filter="(.status.conditions | any_c(.type == \"Ready\" and .status == \"False\" and .reason != \"PodCompleted\"))${exclude_witness}"
-
+    # Pull non-ready pods as "<namespace> <name> <nodeName>" lines, then
+    # decide per-pod in shell. On a witness node only essential workloads
+    # (etcd, kube-proxy, rke2-canal/multus, harvester-node-manager,
+    # cloud-controller-manager) count as a failure; other non-ready pods on
+    # the witness are acceptable noise from the etcd:NoExecute taint.
     pods=$(kubectl get pods -A -o yaml)
-    no_ok=$(echo "$pods" | yq ".items[] | select(${not_ready_filter})")
+    non_ready=$(echo "$pods" | yq '.items[]
+        | select(.status.conditions | any_c(.type == "Ready" and .status == "False" and .reason != "PodCompleted"))
+        | .metadata.namespace + " " + .metadata.name + " " + (.spec.nodeName // "-")')
 
-    if [ -z "$no_ok" ]; then
+    failures=""
+    while read -r ns name node; do
+        [ -z "$name" ] && continue
+        if [[ " $WITNESS_NODE_NAMES " == *" $node "* ]]; then
+            case "$name" in
+                harvester-node-manager-*|cloud-controller-manager-*|etcd-*|kube-proxy-*|rke2-canal-*|rke2-multus-*) ;;
+                *) continue ;;
+            esac
+        fi
+        failures+="${ns}/${name}"$'\n'
+    done <<< "$non_ready"
+
+    if [ -z "$failures" ]; then
         log_verbose "All pods are OK."
         log_info "Pod-Status Test: Pass"
         echo -e "\n==============================\n"
@@ -466,7 +471,7 @@ check_error_pods()
     fi
 
     log_info "There are non-ready pods:"
-    log_info "$(echo "$pods" | yq ".items[] | select(${not_ready_filter}) | .metadata.namespace + \"/\" + .metadata.name")"
+    log_info "${failures%$'\n'}"
     record_fail "Pod-Status"
 }
 
