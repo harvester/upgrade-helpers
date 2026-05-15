@@ -730,6 +730,306 @@ check_virtual_machines_live_migration()
     echo -e "\n==============================\n"
 }
 
+# Get the effective Harvester setting value, or an empty string when unset.
+get_setting_effective_value()
+{
+    local setting_name=$1
+    local output
+
+    if ! output=$(kubectl get settings.harvesterhci.io "$setting_name" -o json); then
+        echo ""
+        return 0
+    fi
+
+    echo "$output" | jq -r '
+        (.value // "") as $value |
+        (.default // "") as $default |
+        if $value != "" then $value else $default end
+    '
+}
+
+# Convert an IPv4 address from dotted-decimal format to a 32-bit integer.
+ip_to_int()
+{
+    local ip=$1
+    local a b c d
+
+    IFS=. read -r a b c d <<< "$ip"
+    echo $(( (a * 2**24) + (b * 2**16) + (c * 2**8) + d ))
+}
+
+# Return the integer network bounds for an IPv4 CIDR range.
+# For example, cidr_bounds "192.168.1.10/24" returns <integer for 192.168.1.0> <integer for 192.168.1.255>
+cidr_bounds()
+{
+    local cidr=$1
+
+    # Extract IP and prefix using native Bash parameter expansion (faster than 'cut')
+    local ip="${cidr%/*}"
+    local prefix="${cidr#*/}"
+
+    # Validate that the prefix exists, is a number, and falls within the 0..32 IPv4 range
+    if [[ ! "$prefix" =~ ^[0-9]+$ ]] || [ "$prefix" -lt 0 ] || [ "$prefix" -gt 32 ]; then
+        echo "Error: Invalid CIDR prefix '$prefix'. Must be an integer between 0 and 32." >&2
+        return 1
+    fi
+
+    local ip_int=$(ip_to_int "$ip")
+
+    # Handle the /0 edge case safely to avoid an overflow with 2**32 in 32-bit math spaces
+    if [ "$prefix" -eq 0 ]; then
+        echo "0 4294967295"
+        return 0
+    fi
+
+    # Calculate the total number of IPs in the subnet block
+    local total=$(( 2**(32 - prefix) ))
+
+    # Divides the IP integer by the block size, truncates the remainder, then multiplies back.
+    # For 192.168.1.10/24, this gives the integer form of 192.168.1.0
+    local include_start=$(( (ip_int / total) * total ))
+    local include_end=$(( include_start + total - 1 ))
+
+    echo "$include_start $include_end"
+}
+
+# Count usable IPs in a CIDR range after excluding network, broadcast, and excluded ranges.
+get_usable_ip_count()
+{
+    local range=$1
+    shift
+    local excludes=("$@")
+    local include_start include_end exclude_start exclude_end overlap_start overlap_end count
+    local excluded_ranges=()
+    local merged_start merged_end start end
+
+    read -r include_start include_end < <(cidr_bounds "$range")
+    include_start=$(( include_start + 1 ))
+    include_end=$(( include_end - 1 ))
+
+    if (( include_end < include_start )); then
+        echo 0
+        return
+    fi
+
+    count=$(( include_end - include_start + 1 ))
+    for exclude in "${excludes[@]}"; do
+        read -r exclude_start exclude_end < <(cidr_bounds "$exclude")
+
+        overlap_start=$include_start
+        if (( exclude_start > overlap_start )); then
+            overlap_start=$exclude_start
+        fi
+
+        overlap_end=$include_end
+        if (( exclude_end < overlap_end )); then
+            overlap_end=$exclude_end
+        fi
+
+        if (( overlap_end >= overlap_start )); then
+            excluded_ranges+=("$overlap_start $overlap_end")
+        fi
+    done
+
+    if [ ${#excluded_ranges[@]} -eq 0 ]; then
+        echo "$count"
+        return
+    fi
+
+    merged_start=-1
+    merged_end=-1
+    while read -r start end; do
+        if (( merged_start == -1 )); then
+            merged_start=$start
+            merged_end=$end
+            continue
+        fi
+
+        if (( start <= merged_end + 1 )); then
+            if (( end > merged_end )); then
+                merged_end=$end
+            fi
+            continue
+        fi
+
+        count=$(( count - (merged_end - merged_start + 1) ))
+        merged_start=$start
+        merged_end=$end
+    done < <(printf '%s\n' "${excluded_ranges[@]}" | sort -n -k1,1 -k2,2)
+
+    count=$(( count - (merged_end - merged_start + 1) ))
+    echo "$count"
+}
+
+# Convert a CIDR range into the Whereabouts IPPool resource name.
+# This matches Whereabouts normalizeRange(): replace ":" and "/" with "-".
+# Examples:
+#   192.168.1.0/24  -> 192.168.1.0-24
+#   192.168.1.10/24 -> 192.168.1.10-24
+get_whereabouts_ippool_name()
+{
+    local range=$1
+
+    if [[ "$range" == *: ]]; then
+        range="${range}0"
+    fi
+    range=${range//:/-}
+    range=${range//\//-}
+
+    echo "$range"
+}
+
+# Count allocated IPs in the Whereabouts IPPool that matches the given CIDR range.
+get_whereabouts_allocation_count()
+{
+    local range=$1
+    local ippool_name
+
+    ippool_name=$(get_whereabouts_ippool_name "$range")
+    kubectl get ippools.whereabouts.cni.cncf.io "$ippool_name" -n kube-system -o json 2>/dev/null |
+        jq -r '.spec.allocations // {} | length'
+}
+
+# Count Longhorn instance managers.
+get_longhorn_instance_manager_count()
+{
+    kubectl get instancemanagers.longhorn.io -n longhorn-system -o json | jq -r '.items | length'
+}
+
+# Verify a network configuration has enough available IPs for the requested upgrade need.
+check_network_available_ips()
+{
+    local check_name=$1
+    local config_json=$2
+    local required=$3
+    local reason=$4
+    local range ippool_name allocation_count usable_count available_count
+    local excludes=()
+
+    range=$(echo "$config_json" | jq -r '.range // ""')
+    if [ -z "$range" ]; then
+        log_info "Cannot determine the IP range for $check_name."
+        record_fail "Network-IP-Availability"
+        return 1
+    fi
+
+    mapfile -t excludes < <(echo "$config_json" | jq -r '.exclude[]?')
+    usable_count=$(get_usable_ip_count "$range" "${excludes[@]}")
+    allocation_count=$(get_whereabouts_allocation_count "$range")
+    if [ -z "$allocation_count" ]; then
+        allocation_count=0
+    fi
+    available_count=$(( usable_count - allocation_count ))
+    ippool_name=$(get_whereabouts_ippool_name "$range")
+
+    if (( available_count < required )); then
+        log_info "$check_name has insufficient free IPs for upgrade."
+        log_info "Range: $range, Whereabouts IPPool: kube-system/$ippool_name, usable IPs: $usable_count, allocated IPs: $allocation_count, available IPs: $available_count, required free IPs: $required."
+        log_info "Required free IPs are for $reason. Expand the configured range, reduce excluded ranges, or free IPs used by workloads before upgrading."
+        record_fail "Network-IP-Availability"
+        return 1
+    fi
+
+    log_verbose "$check_name has enough free IPs: available=$available_count required=$required ($reason)."
+}
+
+# Determine if RWX shares the storage network.
+# v1.8+: read from rwx-network Harvester setting's share-storage-network field.
+# Pre-v1.8: read from Longhorn setting "Storage Network For RWX Volume Enabled".
+get_share_storage_network()
+{
+    local rwx_value=$1
+
+    # v1.8+: use the rwx-network Harvester setting.
+    if [ -n "$rwx_value" ]; then
+        echo "$rwx_value" | jq -r '."share-storage-network" // false'
+        return
+    fi
+
+    # Pre-v1.8 fallback: check the Longhorn boolean setting
+    # "Storage Network For RWX Volume Enabled".
+    local lh_rwx_enabled
+    lh_rwx_enabled=$(kubectl get settings.longhorn.io -n longhorn-system storage-network-for-rwx-volume-enabled -o jsonpath='{.value}' 2>/dev/null)
+    if [ "$lh_rwx_enabled" = "true" ]; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+# Check that storage and RWX networks have enough free IPs before the upgrade starts.
+check_storage_rwx_network_ip_availability()
+{
+    log_info "Starting storage/RWX network IP availability check..."
+
+    local rwx_value storage_value share_storage_network rwx_network_json im_count checked=false
+
+    rwx_value=$(get_setting_effective_value "rwx-network")
+    if [ -z "$rwx_value" ]; then
+        log_info "rwx-network setting is only available on v1.8+ clusters. For older versions, the script will check the Longhorn setting 'Storage Network For RWX Volume Enabled' to determine if RWX shares the storage network."
+    fi
+    storage_value=$(get_setting_effective_value "storage-network")
+    share_storage_network=$(get_share_storage_network "$rwx_value")
+
+    # Error: shared mode but no storage network to share.
+    if [ "$share_storage_network" = "true" ] && [ -z "$storage_value" ]; then
+        log_info "rwx-network shares storage-network, but storage-network is empty."
+        record_fail "Network-IP-Availability"
+        return
+    fi
+
+    # Check storage network for Longhorn instance manager IPs.
+    # After the Longhorn upgrade manifest is applied, Longhorn creates a new
+    # set of instance manager pods (with the new image) before removing the old
+    # ones. The IM count doubles, and each new IM requires a fresh
+    # IP from the storage network. Therefore we must have at least im_count
+    # free IPs. If RWX shares this network, add one more for the temporary
+    # upgrade repository RWX volume.
+    if [ -n "$storage_value" ]; then
+        im_count=$(get_longhorn_instance_manager_count)
+        if [ -z "$im_count" ]; then
+            im_count=0
+        fi
+
+        if [ "$share_storage_network" = "true" ]; then
+            # Shared: upgrade repo IP also comes from storage network.
+            if ! check_network_available_ips "Shared storage/RWX network" "$storage_value" "$(( im_count + 1 ))" \
+                "1 upgrade repository RWX volume plus $im_count new Longhorn instance manager IPs"; then
+                return
+            fi
+            checked=true
+        elif [ "$im_count" -gt 0 ]; then
+            # Non-shared: just Longhorn instance manager IPs.
+            if ! check_network_available_ips "Storage network" "$storage_value" "$im_count" \
+                "$im_count new Longhorn instance manager IPs"; then
+                return
+            fi
+            checked=true
+        fi
+    fi
+
+    # Check dedicated RWX network for upgrade repository IP (non-shared only).
+    # The upgrade process creates a temporary RWX volume to serve the upgrade
+    # repository, which requires one free IP from the RWX network.
+    if [ -n "$rwx_value" ] && [ "$share_storage_network" != "true" ]; then
+        rwx_network_json=$(echo "$rwx_value" | jq -c '.network // empty')
+        if [ -n "$rwx_network_json" ]; then
+            if ! check_network_available_ips "Dedicated RWX network" "$rwx_network_json" 1 \
+                "1 upgrade repository RWX volume"; then
+                return
+            fi
+            checked=true
+        fi
+    fi
+
+    if [ "$checked" = "true" ]; then
+        log_info "Storage/RWX Network IP Availability Test: Pass"
+    else
+        log_info "Storage/RWX Network IP Availability Test: Skipped"
+    fi
+    echo -e "\n==============================\n"
+}
+
 # Needed to verify migration from wicked to NetworkManager will work.
 # Only applicable when upgrading from v1.6.x to v1.7.x
 check_network_config()
@@ -906,6 +1206,7 @@ check_virtual_machines_live_migration
 check_error_pods
 check_kubeconfig_secret
 check_backup_target
+check_storage_rwx_network_ip_availability
 
 if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.6)\..* ]]; then
     check_network_config
