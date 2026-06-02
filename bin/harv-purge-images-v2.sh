@@ -20,7 +20,7 @@
 # ==============================================================================
 
 # --- Global Constants ---
-BASE_URL="https://raw.githubusercontent.com/w13915984028/upgrade-helpers/enh8667/manifests/image-lists/lists"
+BASE_URL="https://raw.githubusercontent.com/harvester/upgrade-helpers/refs/heads/main/manifests/image-lists/lists"
 CRICTL="/var/lib/rancher/rke2/bin/crictl"
 CONTAINERD_SOCK="unix:///var/run/k3s/containerd/containerd.sock"
 
@@ -108,7 +108,7 @@ download_official_lists() {
 
     if curl -fsSL --max-time 10 -o "$output_file" "$url"; then
       echo -e "  ${GREEN}[SAVED]${NC} $output_file"
-      ((success_count++))
+      success_count=$((success_count + 1))
     else
       echo -e "  ${RED}[SKIP]${NC} $remote_fname not found on server."
     fi
