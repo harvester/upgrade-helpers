@@ -1,0 +1,53 @@
+# Generated on: 2026-04-08 10:57:09
+# Target Version: v1.3.1
+# Architecture:   arm64
+# Past Versions Analyzed: v1.3.0
+# Logic: Images existing in past versions but no longer used in v1.3.1
+# ------------------------------------------------------------------------------
+backing-image-manager:v1.6.0
+csi-attacher:v4.4.2
+csi-provisioner:v3.6.2
+csi-resizer:v1.9.2
+csi-snapshotter:v6.3.2
+fleet-agent:v0.9.0
+fleet:v0.9.0
+gitjob:v0.1.96
+hardened-calico:v3.26.3-build20231109
+hardened-cluster-autoscaler:v1.8.6-build20231009
+hardened-cni-plugins:v1.2.0-build20231009
+hardened-coredns:v1.10.1-build20231009
+hardened-dns-node-cache:1.22.20-build20231010
+hardened-etcd:v3.5.9-k3s1-build20230802
+hardened-flannel:v0.23.0-build20231109
+hardened-k8s-metrics-server:v0.6.3-build20231009
+hardened-kubernetes:v1.27.10-rke2r1-build20240117
+hardened-multus-cni:v4.0.2-build20231009
+harvester-cluster-repo:v1.3.0
+harvester-eventrouter:v0.1.2
+harvester-load-balancer-webhook:v0.2.5
+harvester-load-balancer:v0.2.5
+harvester-network-controller:v0.3.6
+harvester-network-helper:v0.3.6
+harvester-network-webhook:v0.3.6
+harvester-node-disk-manager:v0.6.1
+harvester-upgrade:v1.3.0
+harvester-webhook:v1.3.0
+harvester:v1.3.0
+klipper-helm:v0.8.2-build20230815
+klipper-lb:v0.4.5
+livenessprobe:v2.11.0
+longhorn-engine:v1.6.0
+longhorn-instance-manager:v1.6.0
+longhorn-manager:v1.6.0
+longhorn-share-manager:v1.6.0
+longhorn-ui:v1.6.0
+nginx-ingress-controller:nginx-1.9.3-hardened1
+rancher-webhook:v0.4.2
+rancher:v2.8.2
+rke2-cloud-provider:v1.28.2-build20231016
+rke2-runtime:v1.27.10-rke2r1
+support-bundle-kit:v0.0.33
+support-bundle-kit:v0.0.36
+system-agent-installer-rancher:v2.8.2
+system-agent-installer-rke2:v1.27.10-rke2r1
+system-agent:v0.3.4-suc
