@@ -250,6 +250,23 @@ check_cluster()
     echo -e "\n==============================\n"
 }
 
+check_cluster_pause()
+{
+    log_info "Starting CAPI Cluster Pause check..."
+    cluster_paused=$(kubectl get clusters.cluster.x-k8s.io/local -n fleet-local -o yaml | yq '.spec.paused')
+
+    # cluster should not be paused
+    if [ "$cluster_paused" = "true" ]; then
+        log_info "CAPI cluster is paused. The upgrade will stall until 'spec.paused' is cleared on clusters.cluster.x-k8s.io/local in namespace fleet-local."
+        record_fail "CAPI-Cluster-Pause"
+        return
+    fi
+
+    log_verbose "The CAPI cluster is not paused."
+    log_info "CAPI-Cluster-Pause Test: Pass"
+    echo -e "\n==============================\n"
+}
+
 check_machines()
 {
     local failed="false"
@@ -880,6 +897,7 @@ check_bundles
 check_harvester_bundle
 check_nodes
 check_cluster
+check_cluster_pause
 check_machines
 check_volumes
 check_attached_volumes
