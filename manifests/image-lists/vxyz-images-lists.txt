@@ -1,3 +1,6 @@
+# Example: this file is used when v1.8.0 is not released but to generate a diff image list
+# It could be used for any on-developing versions
+#
 # v1.8.0 is not released, so this file is maintained manually
 # these images were used by both v1.7.* and v1.8.0
 # and can't be purged from the running cluster

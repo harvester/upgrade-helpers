@@ -1,4 +1,4 @@
-# Generated on: 2026-04-08 11:01:51
+# Generated on: 2026-06-02 11:15:03
 # Target Version: v1.8.0
 # Architecture:   arm64
 # Past Versions Analyzed: v1.7.1,v1.7.0,v1.6.1,v1.6.0,v1.5.1,v1.5.0,v1.4.1,v1.4.0,v1.3.2,v1.3.1,v1.3.0
@@ -17,19 +17,12 @@ bci-base:15.5
 bci-base:15.6
 bci-base:15.7
 cdi-apiserver:1.61.0-150600.3.12.1
-cdi-apiserver:1.62.0-150700.9.3.1
 cdi-cloner:1.61.0-150600.3.12.1
-cdi-cloner:1.62.0-150700.9.3.1
 cdi-controller:1.61.0-150600.3.12.1
-cdi-controller:1.62.0-150700.9.3.1
 cdi-importer:1.61.0-150600.3.12.1
-cdi-importer:1.62.0-150700.9.3.1
 cdi-operator:1.61.0-150600.3.12.1
-cdi-operator:1.62.0-150700.9.3.1
 cdi-uploadproxy:1.61.0-150600.3.12.1
-cdi-uploadproxy:1.62.0-150700.9.3.1
 cdi-uploadserver:1.61.0-150600.3.12.1
-cdi-uploadserver:1.62.0-150700.9.3.1
 csi-attacher:v4.10.0-20251030
 csi-attacher:v4.10.0-20251226
 csi-attacher:v4.4.2
@@ -67,7 +60,6 @@ csi-snapshotter:v8.2.0
 csi-snapshotter:v8.3.0-20250709
 csi-snapshotter:v8.4.0-20251030
 csi-snapshotter:v8.4.0-20251226
-descheduler:v0.33.0
 fleet-agent:v0.10.2
 fleet-agent:v0.10.4
 fleet-agent:v0.12.0
@@ -395,7 +387,6 @@ klipper-lb:v0.4.5
 klipper-lb:v0.4.7
 klipper-lb:v0.4.9
 kube-ovn:v1.13.13
-kube-ovn:v1.14.10
 kube-vip-iptables:v0.6.0
 kube-vip-iptables:v0.8.1
 kube-vip-iptables:v0.9.2
@@ -403,9 +394,7 @@ kubectl:v1.20.2
 kubectl:v1.21.5
 kubectl:v1.29.2
 kubectl:v1.32.2
-kubectl:v1.32.3
 kubectl:v1.33.1
-kubectl:v1.34.0
 kubectl:v1.34.1
 kuberlr-kubectl:v5.0.0
 libguestfs-tools:1.4.0-150600.5.15.1
@@ -483,7 +472,6 @@ mirrored-cluster-api-controller:v1.4.4
 mirrored-cluster-api-controller:v1.7.3
 mirrored-cluster-api-controller:v1.9.5
 mirrored-fluent-fluent-bit:2.2.0
-mirrored-fluent-fluent-bit:3.1.8
 mirrored-grafana-grafana:11.1.0
 mirrored-grafana-grafana:11.5.5
 mirrored-grafana-grafana:9.1.5
@@ -493,18 +481,13 @@ mirrored-ingress-nginx-kube-webhook-certgen:v1.4.4
 mirrored-ingress-nginx-kube-webhook-certgen:v1.5.1
 mirrored-ingress-nginx-kube-webhook-certgen:v1.5.2
 mirrored-ingress-nginx-kube-webhook-certgen:v1.6.0
-mirrored-ingress-nginx-kube-webhook-certgen:v1.6.2
 mirrored-ingress-nginx-kube-webhook-certgen:v1.6.4
-mirrored-ingress-nginx-kube-webhook-certgen:v1.6.7
 mirrored-ingress-nginx-kube-webhook-certgen:v20221220-controller-v1.5.1-58-g787ea74b6
 mirrored-ingress-nginx-kube-webhook-certgen:v20230312-helm-chart-4.5.2-28-g66a760794
 mirrored-jimmidyson-configmap-reload:v0.4.0
 mirrored-kiwigrid-k8s-sidecar:1.24.6
 mirrored-kiwigrid-k8s-sidecar:1.27.4
 mirrored-kiwigrid-k8s-sidecar:1.30.0
-mirrored-kube-logging-config-reloader:v0.0.6
-mirrored-kube-logging-fluentd:v1.16-4.10-full
-mirrored-kube-logging-logging-operator:4.10.0
 mirrored-kube-logging-logging-operator:4.4.0
 mirrored-kube-state-metrics-kube-state-metrics:v2.10.1
 mirrored-kube-state-metrics-kube-state-metrics:v2.12.0
@@ -512,12 +495,9 @@ mirrored-kube-state-metrics-kube-state-metrics:v2.15.0
 mirrored-kube-state-metrics-kube-state-metrics:v2.6.0
 mirrored-library-busybox:1.31.1
 mirrored-library-busybox:1.36.1
-mirrored-library-busybox:1.37.0
 mirrored-library-nginx:1.24.0-alpine
 mirrored-library-nginx:1.27.2-alpine
-mirrored-pause:3.6
 mirrored-prometheus-adapter-prometheus-adapter:v0.10.0
-mirrored-prometheus-adapter-prometheus-adapter:v0.12.0
 mirrored-prometheus-alertmanager:v0.25.0
 mirrored-prometheus-alertmanager:v0.26.0
 mirrored-prometheus-alertmanager:v0.27.0
@@ -529,7 +509,6 @@ mirrored-prometheus-operator-admission-webhook:v0.75.1
 mirrored-prometheus-operator-admission-webhook:v0.80.1
 mirrored-prometheus-operator-prometheus-config-reloader:v0.65.1
 mirrored-prometheus-operator-prometheus-config-reloader:v0.75.1
-mirrored-prometheus-operator-prometheus-config-reloader:v0.80.1
 mirrored-prometheus-operator-prometheus-operator:v0.65.1
 mirrored-prometheus-operator-prometheus-operator:v0.75.1
 mirrored-prometheus-operator-prometheus-operator:v0.80.1
