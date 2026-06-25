@@ -71,15 +71,15 @@ log_info()
 
 
 HARVESTER_CLUSTER_VERSION=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value')
-echo "Upgrading from version $HARVESTER_CLUSTER_VERSION"
 
 # Check if version is empty
 if [[ -z "$HARVESTER_CLUSTER_VERSION" ]]; then
     echo "Failed to retrieve server version. Exiting script check..."
     echo -e "\n==============================\n"
-    return
+    exit 1
 fi
 
+echo "Upgrading from version $HARVESTER_CLUSTER_VERSION"
 
 # Function necessary for version 1.4 of harvester cluster currently...
 # We should check if the Longhorn node has the EvictionRequested flag. If setted to true, will cause a Race Condition.
