@@ -91,7 +91,7 @@ run_validator_daemonset()
     # characters, so misformatting on the caller's part can't wreck the YAML
     local indented_script=$(echo "${2}" | awk '{ print "          " $0 }')
 
-    local daemonset_name="upgrade-helper-$(echo ${check_name} | tr '[:upper:]' '[:lower:]')-check"
+    local daemonset_name="upgrade-helper-$(echo ${check_name} | tr '[:upper:]_' '[:lower:]-')-check"
 
     kubectl apply -f - >/dev/null << EOF
 apiVersion: apps/v1
@@ -145,6 +145,9 @@ spec:
         - mountPath: /oem
           name: oem
           readOnly: true
+        - mountPath: /run/initramfs
+          name: run-initramfs
+          readOnly: true
         - mountPath: /usr/bin/yq
           name: usr-bin-yq
           readOnly: true
@@ -156,6 +159,10 @@ spec:
         - name: oem
           hostPath:
             path: /oem
+            type: Directory
+        - name: run-initramfs
+          hostPath:
+            path: /run/initramfs
             type: Directory
         - name: usr-bin-yq
           hostPath:
@@ -1307,6 +1314,52 @@ EOF
 )"
 }
 
+# This is only a problem upgrading from v1.7 to v1.8,
+# see https://github.com/harvester/harvester/issues/10687 for details.
+check_cos_state_partition_size()
+{
+    log_info "Starting COS_STATE partition size check...."
+
+    # This would be really easy if we could just run
+    #   `lsblk -o LABEL,SIZE | awk '/COS_STATE/ { print $2 }`,
+    # but unfortunately the bci-base container doesn't include either
+    # the `lsblk` or `awk` commands.  So, instead, we're using `df`
+    # (which slightly under-reports the size, because it's looking at
+    # the filesystem, not the partition), then passing that through
+    # `echo` to collapse the spaces in the output so that `cut` will work
+    # correctly, then we divide the size by 1000000 to get a "good enough"
+    # figure in GB.  Here's some sample `df` outputs to demonstrate:
+    #
+    #   # df /run/initramfs/cos-state/
+    #   Filesystem     1K-blocks    Used Available Use% Mounted on
+    #   /dev/vda4        8154588 3763300   3955476  49% /run/initramfs/cos-state
+    #
+    #   # echo $(( 8154588 / 1000000 ))
+    #   8
+    #
+    #   # df /run/initramfs/cos-state/
+    #   Filesystem     1K-blocks    Used Available Use% Mounted on
+    #   /dev/vda4       15375304 4499836  10072652  31% /run/initramfs/cos-state
+    #
+    #   # echo $(( 15375304 / 1000000 ))
+    #   15
+    #
+    run_validator_daemonset COS_STATE-Size "$(cat<<'EOF'
+        set +eE
+        state_size="$(echo $(df /run/initramfs/cos-state/ | tail -n 1) | cut -d ' ' -f 2)"
+        set -eE
+        if [ -z "$state_size" ]; then
+            echo "ERROR: $NODE_NAME: Unable to get COS_STATE partition size"
+        else
+            state_size_gb=$(( $state_size / 1000000 ))
+            if [ "$state_size_gb" -lt 15 ]; then
+                echo "ERROR: $NODE_NAME: COS_STATE partition is only ${state_size_gb}GB, upgrade to Harvester v1.8.x will result in corrupt OS image. Suggest re-installing first to ensure partition is 15GB."
+            fi
+        fi
+EOF
+)"
+}
+
 check_log_file
 
 log_verbose "Script has started"
@@ -1332,6 +1385,10 @@ check_rwx_network_ip_availability
 
 if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.6)\..* ]]; then
     check_network_config
+fi
+
+if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.7)\..* ]]; then
+    check_cos_state_partition_size
 fi
 
 if [ $check_failed -gt 0 ]; then
