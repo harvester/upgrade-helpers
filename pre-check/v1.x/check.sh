@@ -69,6 +69,176 @@ log_info()
     echo -e "${1}"
 }
 
+# Takes two parameters, the check name and a script to run on each node.
+# The script needs to output "ERROR" in order to fail the check.
+# Here's a trivial example:
+# run_validator_daemonset "oem-dir-exists" 'if [ ! -d "/oem/" ] ; then echo "ERROR: $NODE_NAME /oem directory does not exist" ; fi'
+run_validator_daemonset()
+{
+    local check_name="${1}"
+
+    # This gives the most recent version of registry.suse.com/bci/bci-base
+    local bci_base_image=$(crictl images 2>/dev/null | awk '/registry\.suse\.com\/bci\/bci-base/ { print $1 ":" $2 }' | tail -n 1)
+    if [[ -z "$bci_base_image" ]]; then
+        log_info "Failed to find local BCI image"
+        record_fail "${check_name}"
+        return
+    fi
+
+    local timeout_limit=300 # 5 minutes in seconds
+
+    # Writing the script to a temp file means we can mount it into the pod
+    # and then source it from the initContainer's bash command, in order to
+    # have it execute (trying to just drop the script directly into the
+    # yaml as a string literal requires the caller to have it indented
+    # perfectly, which is just asking for trouble...)
+    local script_file=$(mktemp)
+    echo "${2}" > $script_file
+
+    local daemonset_name="upgrade-helper-$(echo ${check_name} | tr '[:upper:]_' '[:lower:]-')-check"
+
+    kubectl apply -f - >/dev/null << EOF
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ${daemonset_name}
+  namespace: harvester-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ${daemonset_name}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${daemonset_name}
+    spec:
+      tolerations:
+        # Ensure the validator runs on master nodes
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        # Ensure the validator runs on witness nodes
+        - effect: NoExecute
+          operator: Exists
+      terminationGracePeriodSeconds: 1
+      initContainers:
+      - name: validator
+        image: ${bci_base_image}
+        command:
+        - bash
+        - -c
+        - |
+          error_trap()
+          {
+            echo "FATAL: \$NODE_NAME: Script aborted on line \$1"
+            exit
+          }
+          trap 'error_trap \$LINENO' ERR
+          set -eEuo pipefail
+
+          source ${script_file}
+
+          echo "RESULT: \$NODE_NAME: Validation completed."
+        env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /oem
+          name: oem
+          readOnly: true
+        - mountPath: /run/initramfs
+          name: run-initramfs
+          readOnly: true
+        - mountPath: /usr/bin/yq
+          name: usr-bin-yq
+          readOnly: true
+        - mountPath: ${script_file}
+          name: script-file
+          readOnly: true
+      containers:
+      - name: sleep
+        image: ${bci_base_image}
+        command: ['sleep', 'infinity']
+      volumes:
+        - name: oem
+          hostPath:
+            path: /oem
+            type: Directory
+        - name: run-initramfs
+          hostPath:
+            path: /run/initramfs
+            type: Directory
+        - name: usr-bin-yq
+          hostPath:
+            path: /usr/bin/yq
+            type: File
+        - name: script-file
+          hostPath:
+            path: ${script_file}
+            type: File
+EOF
+
+    # --- Wait for DaemonSet to be created ---
+    local start_time=$SECONDS
+    until kubectl -n harvester-system get daemonset/${daemonset_name} >/dev/null 2>&1; do
+        if (( SECONDS - start_time > timeout_limit )); then
+            log_info "Timeout: DaemonSet was never created."
+            rm -f $script_file
+            record_fail "${check_name}"
+            return
+        fi
+        sleep 2
+    done
+
+    # --- Wait for Completion on all nodes ---
+    start_time=$SECONDS
+    log_info "Waiting for ${check_name} validator to finish on all nodes..."
+    while true ; do
+        local status=$(kubectl -n harvester-system get daemonset/${daemonset_name} -o json 2>/dev/null)
+        local desired=$(echo "$status" | jq -r '.status.desiredNumberScheduled // 0')
+        local ready=$(echo "$status" | jq -r '.status.numberReady // 0')
+
+        if [[ "$desired" -gt 0 && "$desired" -eq "$ready" ]]; then
+            break
+        fi
+
+        if (( SECONDS - start_time > timeout_limit )); then
+            log_info "Timeout: Validator did not complete on all nodes within 5 minutes."
+            # We don't return yet so we can fetch logs from the nodes that DID finish
+            break
+        fi
+        sleep 5
+    done
+
+    # --- Fetch and Analyze Logs ---
+    local validator_logs=$(kubectl -n harvester-system logs -l app.kubernetes.io/name=${daemonset_name} -c validator --all-pods --prefix --tail=-1 2>&1)
+
+    # Cleanup immediately
+    kubectl -n harvester-system delete daemonset/${daemonset_name} --wait=false >/dev/null 2>&1
+    rm -f $script_file
+
+    # Check for failure keywords
+    if echo "$validator_logs" | grep -Ei "ERROR|FATAL" >/dev/null; then
+        log_info "${check_name} FAILED:"
+        log_info "$validator_logs"
+        record_fail "${check_name}"
+        return
+    fi
+
+    # Ensure we actually got some "RESULT" success messages
+    if ! echo "$validator_logs" | grep -q "RESULT:"; then
+        log_info "${check_name} Check failed to produce any results (possible timeout or scheduling issue)."
+        log_info "Raw logs: $validator_logs"
+        record_fail "${check_name}"
+        return
+    fi
+
+    log_info "${check_name} Test: Pass"
+    echo -e "\n==============================\n"
+}
 
 HARVESTER_CLUSTER_VERSION=$(kubectl get settings.harvesterhci.io server-version -o json | jq -r '.value')
 
@@ -735,47 +905,8 @@ check_virtual_machines_live_migration()
 check_network_config()
 {
     log_info "Starting network config check..."
-    local timeout_limit=300 # 5 minutes in seconds
 
-    # need 'EOF' in single quotes here to avoid variable expansion
-    kubectl apply -f - >/dev/null << 'EOF'
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: upgrade-helper-network-check
-  namespace: harvester-system
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: upgrade-helper-network-check
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: upgrade-helper-network-check
-    spec:
-      tolerations:
-        # Ensure the validator runs on master nodes
-        - key: node-role.kubernetes.io/master
-          effect: NoSchedule
-        # Ensure the validator runs on witness nodes
-        - effect: NoExecute
-          operator: Exists
-      terminationGracePeriodSeconds: 1
-      initContainers:
-      - name: validator
-        # this image will already exist on harvester v1.6.x hosts
-        image: registry.suse.com/bci/bci-base:15.6
-        command:
-        - bash
-        - -c
-        - |
-          error_trap() {
-            echo "FATAL: $NODE_NAME: Script aborted on line $1"
-            exit 1
-          }
-          trap 'error_trap $LINENO' ERR
-          set -o pipefail
-
+    run_validator_daemonset Network-Config "$(cat<<'EOF'
           if [ ! -e "/oem/90_custom.yaml" ]; then
             if [ -e "/oem/99_custom.yaml" ]; then
               # this can happen with systems that were originally install with harvester v1.0
@@ -801,89 +932,54 @@ spec:
               echo "ERROR: $NODE_NAME: /oem/harvester.config is missing management interface config"
             fi
           fi
-          echo "RESULT: $NODE_NAME: Validation completed."
-        env:
-          - name: NODE_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: spec.nodeName
-        securityContext:
-          privileged: true
-        volumeMounts:
-        - mountPath: /oem
-          name: oem
-          readOnly: true
-        - mountPath: /usr/bin/yq
-          name: usr-bin-yq
-          readOnly: true
-      containers:
-      - name: sleep
-        image: registry.suse.com/bci/bci-base:15.6
-        command: ['sleep', 'infinity']
-      volumes:
-        - name: oem
-          hostPath:
-            path: /oem
-            type: Directory
-        - name: usr-bin-yq
-          hostPath:
-            path: /usr/bin/yq
-            type: File
 EOF
+)"
+}
 
-    # --- Wait for DaemonSet to be created ---
-    local start_time=$SECONDS
-    until kubectl -n harvester-system get daemonset/upgrade-helper-network-check >/dev/null 2>&1; do
-        if (( SECONDS - start_time > timeout_limit )); then
-            log_error "Timeout: DaemonSet was never created."
-            return 1
+# This is only a problem upgrading from v1.7 to v1.8,
+# see https://github.com/harvester/harvester/issues/10687 for details.
+check_cos_state_partition_size()
+{
+    log_info "Starting COS_STATE partition size check...."
+
+    # This would be really easy if we could just run
+    #   `lsblk -o LABEL,SIZE | awk '/COS_STATE/ { print $2 }`,
+    # but unfortunately the bci-base container doesn't include either
+    # the `lsblk` or `awk` commands.  So, instead, we're using `df`
+    # (which slightly under-reports the size, because it's looking at
+    # the filesystem, not the partition), then passing that through
+    # `echo` to collapse the spaces in the output so that `cut` will work
+    # correctly, then we divide the size by 1000000 to get a "good enough"
+    # figure in GB.  Here's some sample `df` outputs to demonstrate:
+    #
+    #   # df /run/initramfs/cos-state/
+    #   Filesystem     1K-blocks    Used Available Use% Mounted on
+    #   /dev/vda4        8154588 3763300   3955476  49% /run/initramfs/cos-state
+    #
+    #   # echo $(( 8154588 / 1000000 ))
+    #   8
+    #
+    #   # df /run/initramfs/cos-state/
+    #   Filesystem     1K-blocks    Used Available Use% Mounted on
+    #   /dev/vda4       15375304 4499836  10072652  31% /run/initramfs/cos-state
+    #
+    #   # echo $(( 15375304 / 1000000 ))
+    #   15
+    #
+    run_validator_daemonset COS_STATE-Size "$(cat<<'EOF'
+        set +eE
+        state_size="$(echo $(df /run/initramfs/cos-state/ | tail -n 1) | cut -d ' ' -f 2)"
+        set -eE
+        if [ -z "$state_size" ]; then
+            echo "ERROR: $NODE_NAME: Unable to get COS_STATE partition size"
+        else
+            state_size_gb=$(( $state_size / 1000000 ))
+            if [ "$state_size_gb" -lt 15 ]; then
+                echo "ERROR: $NODE_NAME: COS_STATE partition is only ${state_size_gb}GB, upgrade to Harvester v1.8.x will result in corrupt OS image. Suggest re-installing first to ensure partition is 15GB."
+            fi
         fi
-        sleep 2
-    done
-
-    # --- Wait for Completion on all nodes ---
-    start_time=$SECONDS
-    log_info "Waiting for validator to finish on all nodes..."
-    while true ; do
-        local status=$(kubectl -n harvester-system get daemonset/upgrade-helper-network-check -o json 2>/dev/null)
-        local desired=$(echo "$status" | jq -r '.status.desiredNumberScheduled // 0')
-        local ready=$(echo "$status" | jq -r '.status.numberReady // 0')
-
-        if [[ "$desired" -gt 0 && "$desired" -eq "$ready" ]]; then
-            break
-        fi
-
-        if (( SECONDS - start_time > timeout_limit )); then
-            log_error "Timeout: Validator did not complete on all nodes within 5 minutes."
-            # We don't return yet so we can fetch logs from the nodes that DID finish
-            break
-        fi
-        sleep 5
-    done
-
-    # --- Fetch and Analyze Logs ---
-    local validator_logs=$(kubectl -n harvester-system logs -l app.kubernetes.io/name=upgrade-helper-network-check -c validator --all-pods --prefix --tail=-1 2>&1)
-
-    # Cleanup immediately
-    kubectl -n harvester-system delete daemonset/upgrade-helper-network-check --wait=false >/dev/null 2>&1
-
-    # Check for failure keywords
-    if echo "$validator_logs" | grep -Ei "ERROR|FATAL" >/dev/null; then
-        log_info "Network Config Check FAILED:"
-        log_info "$validator_logs"
-        record_fail "Network-Config"
-        return 1
-    fi
-
-    # Ensure we actually got some "RESULT" success messages
-    if ! echo "$validator_logs" | grep -q "RESULT:"; then
-        log_error "Network Config Check failed to produce any results (possible timeout or scheduling issue)."
-        log_info "Raw logs: $validator_logs"
-        return 1
-    fi
-
-    log_info "Network Config Check: Pass"
-    echo -e "\n==============================\n"
+EOF
+)"
 }
 
 check_log_file
@@ -909,6 +1005,10 @@ check_backup_target
 
 if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.6)\..* ]]; then
     check_network_config
+fi
+
+if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.7)\..* ]]; then
+    check_cos_state_partition_size
 fi
 
 if [ $check_failed -gt 0 ]; then
