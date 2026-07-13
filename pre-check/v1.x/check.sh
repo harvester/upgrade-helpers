@@ -896,6 +896,12 @@ get_longhorn_instance_manager_count()
     kubectl get instancemanagers.longhorn.io -n longhorn-system -o json | jq -r '.items | length'
 }
 
+# Count Longhorn backing image managers.
+get_longhorn_backing_image_manager_count()
+{
+    kubectl get backingimagemanagers.longhorn.io -n longhorn-system -o json 2>/dev/null | jq -r '.items | length'
+}
+
 # Verify a network configuration has enough available IPs for the requested upgrade need.
 check_network_available_ips()
 {
@@ -962,7 +968,7 @@ check_storage_rwx_network_ip_availability()
 {
     log_info "Starting storage/RWX network IP availability check..."
 
-    local rwx_value storage_value share_storage_network rwx_network_json im_count checked=false
+    local rwx_value storage_value share_storage_network rwx_network_json im_count bim_count storage_required checked=false
 
     rwx_value=$(get_setting_effective_value "rwx-network")
     if [ -z "$rwx_value" ]; then
@@ -978,30 +984,35 @@ check_storage_rwx_network_ip_availability()
         return
     fi
 
-    # Check storage network for Longhorn instance manager IPs.
+    # Check storage network for Longhorn instance manager and backing image manager IPs.
     # After the Longhorn upgrade manifest is applied, Longhorn creates a new
-    # set of instance manager pods (with the new image) before removing the old
-    # ones. The IM count doubles, and each new IM requires a fresh
-    # IP from the storage network. Therefore we must have at least im_count
-    # free IPs. If RWX shares this network, add one more for the temporary
-    # upgrade repository RWX volume.
-    if [ -n "$storage_value" ]; then
+    # set of instance manager and backing image manager pods (with the new image)
+    # before removing the old ones. Each new pod requires a fresh IP from the
+    # storage network. Therefore we must have at least im_count + bim_count free
+    # IPs. If RWX shares this network, add one more for the temporary upgrade
+    # repository RWX volume.
+    if [ -n "$storage_value" ] && [ "$storage_value" != "null" ]; then
         im_count=$(get_longhorn_instance_manager_count)
         if [ -z "$im_count" ]; then
             im_count=0
         fi
+        bim_count=$(get_longhorn_backing_image_manager_count)
+        if [ -z "$bim_count" ]; then
+            bim_count=0
+        fi
+        storage_required=$(( im_count + bim_count ))
 
         if [ "$share_storage_network" = "true" ]; then
             # Shared: upgrade repo IP also comes from storage network.
-            if ! check_network_available_ips "Shared storage/RWX network" "$storage_value" "$(( im_count + 1 ))" \
-                "1 upgrade repository RWX volume plus $im_count new Longhorn instance manager IPs"; then
+            if ! check_network_available_ips "Shared storage/RWX network" "$storage_value" "$(( storage_required + 1 ))" \
+                "1 upgrade repository RWX volume plus $im_count new Longhorn instance manager IPs and $bim_count new Longhorn backing image manager IPs"; then
                 return
             fi
             checked=true
-        elif [ "$im_count" -gt 0 ]; then
-            # Non-shared: just Longhorn instance manager IPs.
-            if ! check_network_available_ips "Storage network" "$storage_value" "$im_count" \
-                "$im_count new Longhorn instance manager IPs"; then
+        elif [ "$storage_required" -gt 0 ]; then
+            # Non-shared: just Longhorn manager pod replacement IPs.
+            if ! check_network_available_ips "Storage network" "$storage_value" "$storage_required" \
+                "$im_count new Longhorn instance manager IPs and $bim_count new Longhorn backing image manager IPs"; then
                 return
             fi
             checked=true
