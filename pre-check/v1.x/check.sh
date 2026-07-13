@@ -909,13 +909,14 @@ check_network_available_ips()
     local config_json=$2
     local required=$3
     local reason=$4
+    local fail_check_name=${5:-Network-IP-Availability}
     local range ippool_name allocation_count usable_count available_count
     local excludes=()
 
     range=$(echo "$config_json" | jq -r '.range // ""')
     if [ -z "$range" ]; then
         log_info "Cannot determine the IP range for $check_name."
-        record_fail "Network-IP-Availability"
+        record_fail "$fail_check_name"
         return 1
     fi
 
@@ -932,7 +933,7 @@ check_network_available_ips()
         log_info "$check_name has insufficient free IPs for upgrade."
         log_info "Range: $range, Whereabouts IPPool: kube-system/$ippool_name, usable IPs: $usable_count, allocated IPs: $allocation_count, available IPs: $available_count, required free IPs: $required."
         log_info "Required free IPs are for $reason. Expand the configured range, reduce excluded ranges, or free IPs used by workloads before upgrading."
-        record_fail "Network-IP-Availability"
+        record_fail "$fail_check_name"
         return 1
     fi
 
@@ -963,81 +964,114 @@ get_share_storage_network()
     fi
 }
 
-# Check that storage and RWX networks have enough free IPs before the upgrade starts.
-check_storage_rwx_network_ip_availability()
+# Check the storage network for Longhorn instance manager and backing image manager IPs.
+# After the Longhorn upgrade manifest is applied, Longhorn creates a new
+# set of instance manager and backing image manager pods (with the new image)
+# before removing the old ones. Each new pod requires a fresh IP from the
+# storage network. Therefore we must have at least im_count + bim_count free
+# IPs. If RWX shares this network, add one more for the temporary upgrade
+# repository RWX volume.
+check_storage_network_ip_availability()
 {
-    log_info "Starting storage/RWX network IP availability check..."
+    log_info "Starting storage network IP availability check..."
 
-    local rwx_value storage_value share_storage_network rwx_network_json im_count bim_count storage_required checked=false
+    local rwx_value storage_value share_storage_network im_count bim_count storage_required
 
     rwx_value=$(get_setting_effective_value "rwx-network")
     if [ -z "$rwx_value" ]; then
         log_info "rwx-network setting is only available on v1.8+ clusters. For older versions, the script will check the Longhorn setting 'Storage Network For RWX Volume Enabled' to determine if RWX shares the storage network."
     fi
     storage_value=$(get_setting_effective_value "storage-network")
-    share_storage_network=$(get_share_storage_network "$rwx_value")
+    rwx_share_storage_network=$(get_share_storage_network "$rwx_value")
 
     # Error: shared mode but no storage network to share.
-    if [ "$share_storage_network" = "true" ] && [ -z "$storage_value" ]; then
+    if [ "$rwx_share_storage_network" = "true" ] && [ -z "$storage_value" ]; then
         log_info "rwx-network shares storage-network, but storage-network is empty."
-        record_fail "Network-IP-Availability"
+        record_fail "Storage-Network-IP-Availability"
         return
     fi
 
-    # Check storage network for Longhorn instance manager and backing image manager IPs.
-    # After the Longhorn upgrade manifest is applied, Longhorn creates a new
-    # set of instance manager and backing image manager pods (with the new image)
-    # before removing the old ones. Each new pod requires a fresh IP from the
-    # storage network. Therefore we must have at least im_count + bim_count free
-    # IPs. If RWX shares this network, add one more for the temporary upgrade
-    # repository RWX volume.
-    if [ -n "$storage_value" ] && [ "$storage_value" != "null" ]; then
-        im_count=$(get_longhorn_instance_manager_count)
-        if [ -z "$im_count" ]; then
-            im_count=0
-        fi
-        bim_count=$(get_longhorn_backing_image_manager_count)
-        if [ -z "$bim_count" ]; then
-            bim_count=0
-        fi
-        storage_required=$(( im_count + bim_count ))
-
-        if [ "$share_storage_network" = "true" ]; then
-            # Shared: upgrade repo IP also comes from storage network.
-            if ! check_network_available_ips "Shared storage/RWX network" "$storage_value" "$(( storage_required + 1 ))" \
-                "1 upgrade repository RWX volume plus $im_count new Longhorn instance manager IPs and $bim_count new Longhorn backing image manager IPs"; then
-                return
-            fi
-            checked=true
-        elif [ "$storage_required" -gt 0 ]; then
-            # Non-shared: just Longhorn manager pod replacement IPs.
-            if ! check_network_available_ips "Storage network" "$storage_value" "$storage_required" \
-                "$im_count new Longhorn instance manager IPs and $bim_count new Longhorn backing image manager IPs"; then
-                return
-            fi
-            checked=true
-        fi
+    if [ -z "$storage_value" ] || [ "$storage_value" = "null" ]; then
+        log_info "Storage Network IP Availability Test: Skipped"
+        echo -e "\n==============================\n"
+        return
     fi
 
-    # Check dedicated RWX network for upgrade repository IP (non-shared only).
-    # The upgrade process creates a temporary RWX volume to serve the upgrade
-    # repository, which requires one free IP from the RWX network.
-    if [ -n "$rwx_value" ] && [ "$share_storage_network" != "true" ]; then
-        rwx_network_json=$(echo "$rwx_value" | jq -c '.network // empty')
-        if [ -n "$rwx_network_json" ]; then
-            if ! check_network_available_ips "Dedicated RWX network" "$rwx_network_json" 1 \
-                "1 upgrade repository RWX volume"; then
-                return
-            fi
-            checked=true
+    im_count=$(get_longhorn_instance_manager_count)
+    if [ -z "$im_count" ]; then
+        im_count=0
+    fi
+    bim_count=$(get_longhorn_backing_image_manager_count)
+    if [ -z "$bim_count" ]; then
+        bim_count=0
+    fi
+    storage_required=$(( im_count + bim_count ))
+
+    if [ "$rwx_share_storage_network" = "true" ]; then
+        # Shared: upgrade repo IP also comes from storage network.
+        if ! check_network_available_ips "Storage network" "$storage_value" "$(( storage_required + 1 ))" \
+            "1 upgrade repository RWX volume plus $im_count new Longhorn instance manager IPs and $bim_count new Longhorn backing image manager IPs" \
+            "Storage-Network-IP-Availability"; then
+            return
         fi
+        log_info "Storage Network IP Availability Test: Pass"
+        echo -e "\n==============================\n"
+        return
     fi
 
-    if [ "$checked" = "true" ]; then
-        log_info "Storage/RWX Network IP Availability Test: Pass"
-    else
-        log_info "Storage/RWX Network IP Availability Test: Skipped"
+    if [ "$storage_required" -gt 0 ]; then
+        if ! check_network_available_ips "Storage network" "$storage_value" "$storage_required" \
+            "$im_count new Longhorn instance manager IPs and $bim_count new Longhorn backing image manager IPs" \
+            "Storage-Network-IP-Availability"; then
+            return
+        fi
+        log_info "Storage Network IP Availability Test: Pass"
+        echo -e "\n==============================\n"
+        return
     fi
+
+    log_info "Storage Network IP Availability Test: Skipped"
+    echo -e "\n==============================\n"
+}
+
+# Check the dedicated RWX network for upgrade repository IP (non-shared only).
+# The upgrade process creates a temporary RWX volume to serve the upgrade
+# repository, which requires one free IP from the RWX network.
+check_rwx_network_ip_availability()
+{
+    log_info "Starting RWX network IP availability check..."
+
+    local rwx_value share_storage_network
+    local rwx_network_json
+
+    rwx_value=$(get_setting_effective_value "rwx-network")
+    if [ -z "$rwx_value" ]; then
+        log_info "RWX network setting is empty. Dedicated RWX Network IP Availability Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    share_storage_network=$(get_share_storage_network "$rwx_value")
+    if [ "$share_storage_network" = "true" ]; then
+        log_info "RWX network shares storage-network. Dedicated RWX Network IP Availability Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    rwx_network_json=$(echo "$rwx_value" | jq -c '.network // empty')
+    if [ -z "$rwx_network_json" ]; then
+        log_info "RWX network setting does not define a dedicated network. Dedicated RWX Network IP Availability Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    if ! check_network_available_ips "Dedicated RWX network" "$rwx_network_json" 1 \
+        "1 upgrade repository RWX volume" \
+        "RWX-Network-IP-Availability"; then
+        return
+    fi
+
+    log_info "Dedicated RWX Network IP Availability Test: Pass"
     echo -e "\n==============================\n"
 }
 
@@ -1217,7 +1251,8 @@ check_virtual_machines_live_migration
 check_error_pods
 check_kubeconfig_secret
 check_backup_target
-check_storage_rwx_network_ip_availability
+check_storage_network_ip_availability
+check_rwx_network_ip_availability
 
 if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.6)\..* ]]; then
     check_network_config
