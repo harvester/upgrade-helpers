@@ -730,15 +730,28 @@ check_virtual_machines_live_migration()
     echo -e "\n==============================\n"
 }
 
-# Get the effective Harvester setting value, or an empty string when unset.
+# Get the effective Harvester setting value.
+# When ignore_not_found is true, a missing setting returns an empty string.
+# Other kubectl errors are returned to the caller.
 get_setting_effective_value()
 {
     local setting_name=$1
+    local ignore_not_found=${2:-false}
     local output
 
-    if ! output=$(kubectl get settings.harvesterhci.io "$setting_name" -o json); then
-        echo ""
-        return 0
+    if [ "$ignore_not_found" = "true" ]; then
+        if ! output=$(kubectl get settings.harvesterhci.io "$setting_name" --ignore-not-found -o json); then
+            return 1
+        fi
+
+        if [ -z "$output" ]; then
+            echo ""
+            return 0
+        fi
+    else
+        if ! output=$(kubectl get settings.harvesterhci.io "$setting_name" -o json); then
+            return 1
+        fi
     fi
 
     echo "$output" | jq -r '
@@ -883,23 +896,38 @@ get_whereabouts_ippool_name()
 get_whereabouts_allocation_count()
 {
     local range=$1
-    local ippool_name
+    local ippool_name ippool_json
 
     ippool_name=$(get_whereabouts_ippool_name "$range")
-    kubectl get ippools.whereabouts.cni.cncf.io "$ippool_name" -n kube-system -o json 2>/dev/null |
-        jq -r '.spec.allocations // {} | length'
+    if ! ippool_json=$(kubectl get ippools.whereabouts.cni.cncf.io "$ippool_name" -n kube-system -o json); then
+        return 1
+    fi
+
+    echo "$ippool_json" | jq -r '.spec.allocations // {} | length'
 }
 
 # Count Longhorn instance managers.
 get_longhorn_instance_manager_count()
 {
-    kubectl get instancemanagers.longhorn.io -n longhorn-system -o json | jq -r '.items | length'
+    local output
+
+    if ! output=$(kubectl get instancemanagers.longhorn.io -n longhorn-system -o json); then
+        return 1
+    fi
+
+    echo "$output" | jq -r '.items | length'
 }
 
 # Count Longhorn backing image managers.
 get_longhorn_backing_image_manager_count()
 {
-    kubectl get backingimagemanagers.longhorn.io -n longhorn-system -o json 2>/dev/null | jq -r '.items | length'
+    local output
+
+    if ! output=$(kubectl get backingimagemanagers.longhorn.io -n longhorn-system -o json); then
+        return 1
+    fi
+
+    echo "$output" | jq -r '.items | length'
 }
 
 # Verify a network configuration has enough available IPs for the requested upgrade need.
@@ -922,9 +950,9 @@ check_network_available_ips()
 
     mapfile -t excludes < <(echo "$config_json" | jq -r '.exclude[]?')
     usable_count=$(get_usable_ip_count "$range" "${excludes[@]}")
-    allocation_count=$(get_whereabouts_allocation_count "$range")
-    if [ -z "$allocation_count" ]; then
-        allocation_count=0
+    if ! allocation_count=$(get_whereabouts_allocation_count "$range"); then
+        record_fail "$fail_check_name"
+        return 1
     fi
     available_count=$(( usable_count - allocation_count ))
     ippool_name=$(get_whereabouts_ippool_name "$range")
@@ -946,6 +974,7 @@ check_network_available_ips()
 get_share_storage_network()
 {
     local rwx_value=$1
+    local lh_rwx_enabled
 
     # v1.8+: use the rwx-network Harvester setting.
     if [ -n "$rwx_value" ]; then
@@ -955,8 +984,10 @@ get_share_storage_network()
 
     # Pre-v1.8 fallback: check the Longhorn boolean setting
     # "Storage Network For RWX Volume Enabled".
-    local lh_rwx_enabled
-    lh_rwx_enabled=$(kubectl get settings.longhorn.io -n longhorn-system storage-network-for-rwx-volume-enabled -o jsonpath='{.value}' 2>/dev/null)
+    if ! lh_rwx_enabled=$(kubectl get settings.longhorn.io -n longhorn-system storage-network-for-rwx-volume-enabled --ignore-not-found -o jsonpath='{.value}'); then
+        return 1
+    fi
+
     if [ "$lh_rwx_enabled" = "true" ]; then
         echo "true"
     else
@@ -975,14 +1006,23 @@ check_storage_network_ip_availability()
 {
     log_info "Starting storage network IP availability check..."
 
-    local rwx_value storage_value share_storage_network im_count bim_count storage_required
+    local rwx_value storage_value rwx_share_storage_network im_count bim_count storage_required
 
-    rwx_value=$(get_setting_effective_value "rwx-network")
+    if ! rwx_value=$(get_setting_effective_value "rwx-network" true); then
+        record_fail "Storage-Network-IP-Availability"
+        return
+    fi
     if [ -z "$rwx_value" ]; then
         log_info "rwx-network setting is only available on v1.8+ clusters. For older versions, the script will check the Longhorn setting 'Storage Network For RWX Volume Enabled' to determine if RWX shares the storage network."
     fi
-    storage_value=$(get_setting_effective_value "storage-network")
-    rwx_share_storage_network=$(get_share_storage_network "$rwx_value")
+    if ! storage_value=$(get_setting_effective_value "storage-network"); then
+        record_fail "Storage-Network-IP-Availability"
+        return
+    fi
+    if ! rwx_share_storage_network=$(get_share_storage_network "$rwx_value"); then
+        record_fail "Storage-Network-IP-Availability"
+        return
+    fi
 
     # Error: shared mode but no storage network to share.
     if [ "$rwx_share_storage_network" = "true" ] && [ -z "$storage_value" ]; then
@@ -997,13 +1037,13 @@ check_storage_network_ip_availability()
         return
     fi
 
-    im_count=$(get_longhorn_instance_manager_count)
-    if [ -z "$im_count" ]; then
-        im_count=0
+    if ! im_count=$(get_longhorn_instance_manager_count); then
+        record_fail "Storage-Network-IP-Availability"
+        return
     fi
-    bim_count=$(get_longhorn_backing_image_manager_count)
-    if [ -z "$bim_count" ]; then
-        bim_count=0
+    if ! bim_count=$(get_longhorn_backing_image_manager_count); then
+        record_fail "Storage-Network-IP-Availability"
+        return
     fi
     storage_required=$(( im_count + bim_count ))
 
@@ -1044,14 +1084,20 @@ check_rwx_network_ip_availability()
     local rwx_value share_storage_network
     local rwx_network_json
 
-    rwx_value=$(get_setting_effective_value "rwx-network")
+    if ! rwx_value=$(get_setting_effective_value "rwx-network" true); then
+        record_fail "RWX-Network-IP-Availability"
+        return
+    fi
     if [ -z "$rwx_value" ]; then
         log_info "RWX network setting is empty. Dedicated RWX Network IP Availability Test: Skipped"
         echo -e "\n==============================\n"
         return
     fi
 
-    share_storage_network=$(get_share_storage_network "$rwx_value")
+    if ! share_storage_network=$(get_share_storage_network "$rwx_value"); then
+        record_fail "RWX-Network-IP-Availability"
+        return
+    fi
     if [ "$share_storage_network" = "true" ]; then
         log_info "RWX network shares storage-network. Dedicated RWX Network IP Availability Test: Skipped"
         echo -e "\n==============================\n"
