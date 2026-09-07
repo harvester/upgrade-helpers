@@ -91,6 +91,11 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     ==============================
     
+    Starting Image Volume Size check...
+    Image-Volume-Size Test: Pass
+    
+    ==============================
+    
     Starting Virtual Machines Live Migration check...
     Virtual Machines Test: Pass
     

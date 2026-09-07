@@ -1360,6 +1360,91 @@ EOF
 )"
 }
 
+check_image_volume_size()
+{
+    log_info "Starting Image Volume Size check..."
+
+    local images_json
+    local pvcs_json
+    local undersized
+
+    images_json=$(kubectl get virtualmachineimages.harvesterhci.io -A -o json)
+    pvcs_json=$(kubectl get pvc -A -o json)
+    undersized=$(printf '%s\n%s\n' "$images_json" "$pvcs_json" | jq --raw-output --null-input '
+        def gib: 1073741824;
+
+        # Convert a Kubernetes quantity (e.g. "10Gi", "500M", "1024") to bytes.
+        def to_bytes:
+            if . == null then 0
+            elif type == "number" then .
+            else tostring as $quantity
+                | if $quantity | test("^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)[eE][+-]?[0-9]+$")
+                  then $quantity | tonumber
+                  else $quantity
+                    | capture("^(?<number>[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+))(?<suffix>Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|k|K|m)?$")
+                    | (.number | tonumber) * (
+                      (.suffix // "") as $suffix
+                      | if $suffix == "Ki" then 1024
+                        elif $suffix == "Mi" then 1048576
+                        elif $suffix == "Gi" then gib
+                        elif $suffix == "Ti" then 1099511627776
+                        elif $suffix == "Pi" then 1125899906842624
+                        elif $suffix == "Ei" then 1152921504606846976
+                        elif $suffix == "m" then 0.001
+                        elif $suffix == "k" or $suffix == "K" then 1000
+                        elif $suffix == "M" then 1000000
+                        elif $suffix == "G" then 1000000000
+                        elif $suffix == "T" then 1000000000000
+                        elif $suffix == "P" then 1000000000000000
+                        elif $suffix == "E" then 1000000000000000000
+                        else 1
+                        end)
+                  end
+            end;
+
+        # The minimum size is the image virtual size (or its artifact size, if
+        # that is larger), rounded up to whole GiB.
+        def round_up_gib: if . <= 0 then 0 else ((. + gib - 1) / gib | floor) * gib end;
+
+        input as $images
+        | input
+        | ($images.items
+         | map({ key:   (.metadata.namespace + "/" + .metadata.name),
+                 value: ([(.status.virtualSize // 0), (.status.size // 0)] | max | round_up_gib) })
+         | from_entries) as $minsizes
+
+        | .items[]
+        | (.metadata.namespace + "/" + .metadata.name) as $pvc
+        | (.metadata.annotations // {}) as $anno
+
+        # A PVC refers to its source image either by being the backing PVC of a
+        # golden image (same namespace/name), or via the imageId annotation.
+        | (if ($anno["harvesterhci.io/goldenImage"] == "true") and ($minsizes | has($pvc))
+           then $pvc
+           else ($anno["harvesterhci.io/imageId"] // "")
+           end) as $image
+
+        | select($minsizes | has($image))
+        | $minsizes[$image] as $minimum
+        | select($minimum > 0)
+        | (.spec.resources.requests.storage | to_bytes) as $current
+        | select($current < $minimum)
+        | "  \($pvc): \(.spec.resources.requests.storage) is smaller than the required minimum of \($minimum / gib)Gi (source image \($image))"
+    ')
+
+    if [ -n "$undersized" ]; then
+        log_info "Found volumes that are smaller than the virtual size of the VM image they were created from:"
+        log_info "$undersized"
+        log_info "Once the guest writes past the end of such a volume, the guest filesystem can be corrupted."
+        log_info "Expand each of the volumes listed above to at least the required minimum size. If the storage class does not support online expansion, shut down the virtual machine using the volume first."
+        record_fail "Image-Volume-Size"
+    else
+        log_verbose "All volumes created from a VM image are large enough."
+        log_info "Image-Volume-Size Test: Pass"
+        echo -e "\n==============================\n"
+    fi
+}
+
 check_log_file
 
 log_verbose "Script has started"
@@ -1376,6 +1461,7 @@ check_machines
 check_volumes
 check_attached_volumes
 check_images
+check_image_volume_size
 check_virtual_machines_live_migration
 check_error_pods
 check_kubeconfig_secret
