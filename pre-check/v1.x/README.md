@@ -23,6 +23,7 @@ We have developed a script to assist in verifying if a cluster is eligible for a
 
     ```
     # ./check.sh -l log.txt
+    Upgrading from version v1.x.y
     ==============================
     
     Starting Host check...
@@ -60,6 +61,11 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     ==============================
     
+    Starting CAPI Cluster Pause check...
+    CAPI-Cluster-Pause Test: Pass
+    
+    ==============================
+    
     Starting CAPI Machine Count check...
     CAPI-Machine-Count Test: Pass
     
@@ -80,18 +86,39 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     ==============================
     
+    Starting Longhorn Backing Images check...
+    Longhorn-Backing-Images Test: Pass
+    
+    ==============================
+    
+    Starting Virtual Machines Live Migration check...
+    Virtual Machines Test: Pass
+    
+    ==============================
+    
     Starting Pod Status check...
     Pod-Status Test: Pass
     
     ==============================
     
-    Starting Node Free Space check...
-    Node-Free-Space Test: Pass
+    Starting Kubeconfig Secret check...
+    Kubeconfig Secret Test: Pass
     
     ==============================
     
-    Starting Kubeconfig Secret check...
-    Kubeconfig Secret Test: Pass
+    Starting Backup Target check...
+    The current version (v1.9.0) is not v1.4.1 or v1.4.2. Skip the Backup Target check.
+    Backup Target Test: Skipped
+    
+    ==============================
+    
+    Starting storage network IP availability check...
+    Storage Network IP Availability Test: Skipped
+    
+    ==============================
+    
+    Starting RWX network IP availability check...
+    RWX network setting does not define a dedicated network. Dedicated RWX Network IP Availability Test: Skipped
     
     ==============================
     
