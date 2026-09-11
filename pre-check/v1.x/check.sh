@@ -887,6 +887,42 @@ check_virtual_machines_live_migration()
     echo -e "\n==============================\n"
 }
 
+# Automatic live migration during node upgrade can fail for VMs whose CPU topology
+# has cores * threads > 1, due to a libvirt bug affecting incoming migration to QEMU.
+# See https://docs.harvesterhci.io/v1.9/upgrade/v1-8-x-to-v1-9-x#2-automatic-live-migration-may-fail-for-virtual-machines-with-certain-cpu-topologies
+check_vmi_cpu_topology()
+{
+    log_info "Starting VMI CPU Topology check..."
+
+    node_count=$(kubectl get nodes -o yaml | yq '.items | length')
+    if [ $node_count -eq 1 ]; then
+        log_info "Skip checking for single node cluster."
+        log_info "VMI-CPU-Topology Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    vmis=$(kubectl get vmis.kubevirt.io -A -o json)
+
+    affected_vmis=$(echo "$vmis" | jq -r '
+        .items[] |
+        ((.spec.domain.cpu.cores // 1) * (.spec.domain.cpu.threads // 1)) as $total |
+        select($total > 1) |
+        "\(.metadata.namespace)/\(.metadata.name) (cores=\(.spec.domain.cpu.cores // 1), threads=\(.spec.domain.cpu.threads // 1))"
+    ')
+
+    if [ -n "$affected_vmis" ]; then
+        log_info "Found running VMIs with CPU topology where cores * threads > 1:"
+        log_info "$affected_vmis"
+        log_info "These VMs may fail to automatically live migrate during the node upgrade due to a known libvirt/QEMU issue (guest CPU doesn't match specification: extra features: ht). Consider gracefully shutting them down before upgrading and manually powering them on afterwards. See https://docs.harvesterhci.io/v1.9/upgrade/v1-8-x-to-v1-9-x#2-automatic-live-migration-may-fail-for-virtual-machines-with-certain-cpu-topologies for details."
+        record_fail "VMI-CPU-Topology"
+        return
+    fi
+
+    log_info "VMI-CPU-Topology Test: Pass"
+    echo -e "\n==============================\n"
+}
+
 # Get the effective Harvester setting value.
 # When ignore_not_found is true, a missing setting returns an empty string.
 # Other kubectl errors are returned to the caller.
@@ -1475,6 +1511,10 @@ fi
 
 if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.7)\..* ]]; then
     check_cos_state_partition_size
+fi
+
+if [[ $HARVESTER_CLUSTER_VERSION =~ ^v(1.8)\..* ]]; then
+    check_vmi_cpu_topology
 fi
 
 if [ $check_failed -gt 0 ]; then
