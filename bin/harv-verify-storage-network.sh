@@ -34,12 +34,21 @@ get_storage_network_mtu() {
 }
 
 start_webservers() {
+  WEBSERVER_DIRS=()
   for i in "${!POD_NAMES[@]}"; do
     local pod_name="${POD_NAMES[$i]}"
     local pod_ip="${POD_IPS[$i]}"
+    local server_dir
+    server_dir="$(kubectl exec -n "$NAMESPACE" "$pod_name" -- \
+      mktemp -d "$WEBSERVER_DIR.XXXXXX")"
+    WEBSERVER_DIRS[$i]="$server_dir"
     echo "Starting webserver on $pod_name"
-    kubectl exec -n $NAMESPACE "$pod_name" -- sh -c \
-      "mkdir -p $WEBSERVER_DIR && cd $WEBSERVER_DIR && exec python3 -m http.server 8000 --bind $pod_ip" &>/dev/null &
+    kubectl exec -n "$NAMESPACE" "$pod_name" -- sh -c '
+      mkdir "$1/www" || exit 1
+      cd "$1/www" || exit 1
+      printf "%s\n" "$$" > "$1/server.pid" || exit 1
+      exec python3 -m http.server 8000 --bind "$2"
+    ' sh "$server_dir" "$pod_ip" &>/dev/null &
     WEBSERVER_PIDS+=("$!")
   done
 }
@@ -50,10 +59,17 @@ stop_webservers() {
   for pid in "${WEBSERVER_PIDS[@]}"; do
     kill "$pid" &>/dev/null || true
   done
-  for pod_name in "${POD_NAMES[@]}"; do
-    echo "Killing webserver on $pod_name"
-    kubectl exec -n $NAMESPACE "$pod_name" -- pkill -f 'python3 -m http.server 8000' &>/dev/null || true
-    kubectl exec -n $NAMESPACE "$pod_name" -- rm -rf "$WEBSERVER_DIR" &>/dev/null || true
+  for i in "${!WEBSERVER_DIRS[@]}"; do
+    local pod_name="${POD_NAMES[$i]}"
+    local server_dir="${WEBSERVER_DIRS[$i]}"
+    echo "Stopping webserver on $pod_name"
+    kubectl exec -n "$NAMESPACE" "$pod_name" -- sh -c '
+      pid="$(cat "$1/server.pid")" || exit 0
+      [ "$(readlink "/proc/$pid/cwd")" = "$1/www" ] || exit 0
+      kill "$pid"
+    ' sh "$server_dir" &>/dev/null || true
+    kubectl exec -n "$NAMESPACE" "$pod_name" -- \
+      rm -rf "$server_dir" &>/dev/null || true
   done
 }
 
