@@ -7,10 +7,11 @@ usage() {
  echo " -v,	Enable verbose mode"
  echo " -l,	Specify path to a log file."
  echo " -y,     Assume 'y' to all answers and continue without asking."
+ echo " -t,	Specify the upgrade target version (e.g. v1.9.1). Used to skip checks fixed in the target."
 }
 
 
-while getopts "hvyl:" flag; do
+while getopts "hvyl:t:" flag; do
  case $flag in
    h) # Handle the -h flag
    # Display script help information
@@ -23,6 +24,9 @@ while getopts "hvyl:" flag; do
    v) # Handle the -v flag
    # Enable verbose mode
    verbose=true
+   ;;
+   t) # Handle the -t with an argument
+   target_version=$OPTARG
    ;;
    y) # Handle the -y flag
    # Assumes a 'y' answer to all prompts to continue.
@@ -889,10 +893,19 @@ check_virtual_machines_live_migration()
 
 # Automatic live migration during node upgrade can fail for VMs whose CPU topology
 # has cores * threads > 1, due to a libvirt bug affecting incoming migration to QEMU.
+# The issue only affects upgrading to v1.9.0 and is fixed in v1.9.1 and later.
+# Without -t, the target is unknown, so the check runs.
 # See https://docs.harvesterhci.io/v1.9/upgrade/v1-8-x-to-v1-9-x#2-automatic-live-migration-may-fail-for-virtual-machines-with-certain-cpu-topologies
 check_vmi_cpu_topology()
 {
     log_info "Starting VMI CPU Topology check..."
+
+    if [ -n "$target_version" ] && [ "$target_version" != "v1.9.0" ]; then
+        log_info "Upgrade target is $target_version, the issue is fixed in v1.9.1 and later."
+        log_info "VMI-CPU-Topology Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
 
     node_count=$(kubectl get nodes -o yaml | yq '.items | length')
     if [ $node_count -eq 1 ]; then
@@ -915,6 +928,7 @@ check_vmi_cpu_topology()
         log_info "Found running VMIs with CPU topology where cores * threads > 1:"
         log_info "$affected_vmis"
         log_info "These VMs may fail to automatically live migrate during the node upgrade due to a known libvirt/QEMU issue (guest CPU doesn't match specification: extra features: ht). Consider gracefully shutting them down before upgrading and manually powering them on afterwards. See https://docs.harvesterhci.io/v1.9/upgrade/v1-8-x-to-v1-9-x#2-automatic-live-migration-may-fail-for-virtual-machines-with-certain-cpu-topologies for details."
+        log_info "NOTE: This issue is fixed in v1.9.1. If you upgrade to v1.9.1 or later instead of v1.9.0, there is no need to shut down and power on these VMs."
         record_fail "VMI-CPU-Topology"
         return
     fi
