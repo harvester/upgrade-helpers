@@ -1441,9 +1441,6 @@ check_image_volume_size()
         # The minimum size is the image virtual size (or its artifact size, if
         # that is larger). Do not round up to whole GiB; volumes sized exactly
         # to this minimum are large enough.
-        # Bytes as GiB, rounded up to two decimals so the displayed value is
-        # never smaller than the actual minimum.
-        def gib_approx: ((. * 100 / gib | -(-. | floor))) / 100;
 
         input as $images
         | input
@@ -1469,7 +1466,7 @@ check_image_volume_size()
         | select($minimum > 0)
         | (.spec.resources.requests.storage | to_bytes) as $current
         | select($current < $minimum)
-        | "  \($pvc): \(.spec.resources.requests.storage) is smaller than the required minimum of \($minimum) bytes (~\($minimum | gib_approx)Gi) (source image \($image))"
+        | "  \($pvc): \(.spec.resources.requests.storage) is smaller than the required minimum of \($minimum) bytes (source image \($image))"
     ')
 
     if [ -n "$undersized" ]; then
