@@ -914,7 +914,7 @@ check_vmi_cpu_topology()
     if [ -n "$affected_vmis" ]; then
         log_info "Found running VMIs with CPU topology where cores * threads > 1:"
         log_info "$affected_vmis"
-        log_info "These VMs may fail to automatically live migrate during the node upgrade due to a known libvirt/QEMU issue (guest CPU doesn't match specification: extra features: ht). Consider gracefully shutting them down before upgrading and manually powering them on afterwards. See https://docs.harvesterhci.io/v1.9/upgrade/v1-8-x-to-v1-9-x#2-automatic-live-migration-may-fail-for-virtual-machines-with-certain-cpu-topologies for details."
+        log_info "If upgrading to v1.9.0 -> these VMs may fail to automatically live migrate during the node upgrade due to a known libvirt/QEMU issue (guest CPU doesn't match specification: extra features: ht). Consider gracefully shutting them down before upgrading and manually powering them on afterwards. See https://docs.harvesterhci.io/v1.9/upgrade/v1-8-x-to-v1-9-x#2-automatic-live-migration-may-fail-for-virtual-machines-with-certain-cpu-topologies for details. If upgrading to v1.9.1, you can ignore this message as this has been fixed via: https://github.com/harvester/harvester/issues/11615#issuecomment-6571514927"
         record_fail "VMI-CPU-Topology"
         return
     fi
