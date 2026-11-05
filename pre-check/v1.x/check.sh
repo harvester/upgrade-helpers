@@ -1407,8 +1407,6 @@ check_image_volume_size()
     images_json=$(kubectl get virtualmachineimages.harvesterhci.io -A -o json)
     pvcs_json=$(kubectl get pvc -A -o json)
     undersized=$(printf '%s\n%s\n' "$images_json" "$pvcs_json" | jq --raw-output --null-input '
-        def gib: 1073741824;
-
         # Convert a Kubernetes quantity (e.g. "10Gi", "500M", "1024") to bytes.
         def to_bytes:
             if . == null then 0
@@ -1422,7 +1420,7 @@ check_image_volume_size()
                       (.suffix // "") as $suffix
                       | if $suffix == "Ki" then 1024
                         elif $suffix == "Mi" then 1048576
-                        elif $suffix == "Gi" then gib
+                        elif $suffix == "Gi" then 1073741824
                         elif $suffix == "Ti" then 1099511627776
                         elif $suffix == "Pi" then 1125899906842624
                         elif $suffix == "Ei" then 1152921504606846976
@@ -1437,14 +1435,12 @@ check_image_volume_size()
                         end)
                   end
             end;
-       
+
         # The minimum size is the image virtual size (or its artifact size, if
-        # that is larger). Do not round up to whole GiB; volumes sized exactly
-        # to this minimum are large enough.
+        # that is larger).
 
         input as $images
         | input
-
         | ($images.items
          | map({ key:   (.metadata.namespace + "/" + .metadata.name),
                  value: ([(.status.virtualSize // 0), (.status.size // 0)] | max) })
@@ -1466,7 +1462,7 @@ check_image_volume_size()
         | select($minimum > 0)
         | (.spec.resources.requests.storage | to_bytes) as $current
         | select($current < $minimum)
-        | "  \($pvc): \(.spec.resources.requests.storage) is smaller than the required minimum of \($minimum) bytes (source image \($image))"
+        | "  \($pvc): \($current) bytes is smaller than the required minimum of \($minimum) bytes (source image \($image))"
     ')
 
     if [ -n "$undersized" ]; then
