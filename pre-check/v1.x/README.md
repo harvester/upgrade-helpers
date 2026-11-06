@@ -56,6 +56,11 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     ==============================
     
+    Starting Node HA check...
+    Node-HA Test: Pass
+    
+    ==============================
+    
     Starting CAPI Cluster State check...
     CAPI-Cluster-State Test: Pass
     
@@ -78,6 +83,11 @@ We have developed a script to assist in verifying if a cluster is eligible for a
     
     Starting Longhorn Volume Health Status check...
     Longhorn-Volume-Health-Status Test: Pass
+    
+    ==============================
+    
+    Starting Default StorageClass Replicas check...
+    Default-StorageClass-Replicas Test: Pass
     
     ==============================
     

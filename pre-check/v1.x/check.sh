@@ -69,6 +69,12 @@ log_info()
     echo -e "${1}"
 }
 
+# Return the number of nodes in the cluster.
+get_node_count()
+{
+    kubectl get nodes -o yaml | yq '.items | length'
+}
+
 # Takes two parameters, the check name and a script to run on each node.
 # The script needs to output "ERROR" in order to fail the check.
 # Here's a trivial example:
@@ -390,6 +396,45 @@ check_nodes()
 }
 
 
+# Warn when the cluster is not HA. HA needs at least 3 etcd members - 3 management
+# nodes, or 2 management nodes plus 1 witness node - to keep etcd quorum and volume
+# replicas available while a node is drained during the upgrade. 2-node clusters are
+# the most fragile. Single-node clusters are a supported special case and skipped.
+check_node_ha()
+{
+    log_info "Starting Node HA check..."
+
+    node_count=$(get_node_count)
+
+    if [ "$node_count" -eq 1 ]; then
+        log_info "Single-node cluster detected. HA is not applicable."
+        log_info "Node-HA Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    # Count etcd members, which form the quorum. A witness node only gets the
+    # node-role.kubernetes.io/etcd label (not control-plane), so counting by the
+    # etcd label covers both regular management nodes and the witness node.
+    management_count=$(kubectl get nodes -l node-role.kubernetes.io/etcd=true -o json | jq -r '.items | length')
+
+    if [ "$management_count" -lt 3 ]; then
+        log_info "WARN: The cluster has ${node_count} node(s) and only ${management_count} management (etcd) node(s)."
+        log_info "A highly-available Harvester cluster needs at least 3 management nodes (or 2 management nodes plus 1 witness node)."
+        if [ "$node_count" -eq 2 ]; then
+            log_info "A 2-node cluster is especially risky: draining one node during the upgrade leaves no etcd quorum and can strand Longhorn volume replicas, stalling the upgrade."
+        fi
+        log_info "Node-HA Test: WARNING"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    log_verbose "The cluster has ${management_count} management nodes."
+    log_info "Node-HA Test: Pass"
+    echo -e "\n==============================\n"
+}
+
+
 check_cluster()
 {
     log_info "Starting CAPI Cluster State check..."
@@ -431,7 +476,7 @@ check_machines()
 
     # machine count should be equal to node counts
     machine_count=$(kubectl get machines.cluster.x-k8s.io -n fleet-local -o yaml | yq '.items | length')
-    node_count=$(kubectl get nodes -o yaml | yq '.items | length')
+    node_count=$(get_node_count)
     if [ $machine_count -ne $node_count ]; then
         log_info "CAPI machine count (${machine_count}) is not equal to node count (${node_count}). Check the log or verbose mode (-l or -v) for more details. "
         log_verbose "There are orphan machines:"
@@ -476,7 +521,7 @@ check_volumes()
 {
     log_info "Starting Longhorn Volume Health Status check..."
 
-    node_count=$(kubectl get nodes -o yaml | yq '.items | length')
+    node_count=$(get_node_count)
 
     if [ $node_count -eq 1 ]; then
         log_info "Skip checking for single node cluster."
@@ -541,6 +586,59 @@ check_volumes()
         log_info "There are volumes that need your attention!"
         record_fail "Longhorn-Volume-Health-Status"
     fi
+}
+
+# https://github.com/harvester/harvester/issues/8704
+# In a multi-node cluster, a default StorageClass with numberOfReplicas: 1 can
+# deadlock the upgrade: the upgrade repository VM's single replica is pinned to
+# one node, and draining that node makes the volume unattachable.
+# check_volumes only inspects existing volumes, not the default StorageClass that
+# newly provisioned volumes inherit.
+check_default_storageclass_replicas()
+{
+    log_info "Starting Default StorageClass Replicas check..."
+
+    node_count=$(get_node_count)
+
+    if [ "$node_count" -eq 1 ]; then
+        log_info "Skip checking for single node cluster."
+        log_info "Default-StorageClass-Replicas Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    # A cluster may (mis)configure more than one default StorageClass, so handle
+    # all of them.
+    default_scs=$(kubectl get storageclass -o json | jq -r '.items[] | select(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] == "true") | .metadata.name')
+
+    if [ -z "$default_scs" ]; then
+        log_info "No default StorageClass found."
+        log_info "Default-StorageClass-Replicas Test: Skipped"
+        echo -e "\n==============================\n"
+        return
+    fi
+
+    local failed="false"
+    for sc in $default_scs; do
+        replicas=$(kubectl get storageclass "$sc" -o json | jq -r '.parameters.numberOfReplicas // ""')
+        if [ "$replicas" = "1" ]; then
+            log_info "Default StorageClass '${sc}' provisions single-replica volumes (numberOfReplicas: 1)."
+            log_info "In a multi-node cluster this can deadlock the upgrade when the node hosting the upgrade repository volume's only replica is drained. See https://github.com/harvester/harvester/issues/8704."
+            log_info "Please set numberOfReplicas to greater than 1 (the Longhorn default is 3) on the default StorageClass before upgrading."
+            failed="true"
+        else
+            log_verbose "Default StorageClass '${sc}' has numberOfReplicas: ${replicas:-unset}."
+        fi
+    done
+
+    if [ "$failed" = "true" ]; then
+        record_fail "Default-StorageClass-Replicas"
+        return
+    fi
+
+    log_verbose "The default StorageClass provisions multi-replica volumes."
+    log_info "Default-StorageClass-Replicas Test: Pass"
+    echo -e "\n==============================\n"
 }
 
 # https://github.com/harvester/harvester/issues/3648
@@ -894,7 +992,7 @@ check_vmi_cpu_topology()
 {
     log_info "Starting VMI CPU Topology check..."
 
-    node_count=$(kubectl get nodes -o yaml | yq '.items | length')
+    node_count=$(get_node_count)
     if [ $node_count -eq 1 ]; then
         log_info "Skip checking for single node cluster."
         log_info "VMI-CPU-Topology Test: Skipped"
@@ -1488,10 +1586,12 @@ check_free_space
 check_bundles
 check_harvester_bundle
 check_nodes
+check_node_ha
 check_cluster
 check_cluster_pause
 check_machines
 check_volumes
+check_default_storageclass_replicas
 check_attached_volumes
 check_images
 check_image_volume_size
