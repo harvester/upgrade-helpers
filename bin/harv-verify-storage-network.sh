@@ -324,39 +324,54 @@ check_pairs_from() {
   ' sh "${POD_DIRS[$1]}" "$WEBSERVER_PORT" "$((MTU - 28))" "${targets[@]}"
 }
 
+pair_results_complete() {
+  local file="$1" expected="$2"
+  local pattern='^[0-9]+ (icmp ok|icmp fail|mtu ok|mtu fail|http ok|http fail|http wrong .*)$'
+  [ "$(grep -cE "$pattern" "$file")" -eq "$((expected * 3))" ]
+}
+
+report_pairs() {
+  local i="$1" j check result detail file
+  local -A icmp_failed=()
+  file="$(result_file check_pairs_from "$i")"
+  if ! pair_results_complete "$file" "$((${#POD_NAMES[@]} - 1))"; then
+    echo "Checks did not complete from $(describe_pod "$i"):"
+    sed 's/^/  /' "$file"
+    FAILED=1
+    return
+  fi
+  while read -r j check result detail; do
+    [ "$result" = "ok" ] && continue
+    case "$check $result" in
+      "icmp fail")
+        icmp_failed[$j]=1
+        echo "Ping failed: $(describe_pod "$i") <-> $(describe_pod "$j")"
+        ;;
+      "mtu fail")
+        if [ -z "${icmp_failed[$j]}" ]; then
+          printf 'MTU %s ping failed, plain ping works: %s <-> %s\n' \
+            "$MTU" "$(describe_pod "$i")" "$(describe_pod "$j")"
+        fi
+        ;;
+      "http fail")
+        echo "HTTP failed: $(describe_pod "$i") <-> $(describe_pod "$j")"
+        ;;
+      "http wrong")
+        printf "HTTP answered by '%s', expected %s: from %s\n" \
+          "$detail" "$(describe_pod "$j")" "$(describe_pod "$i")"
+        ;;
+    esac
+    FAILED=1
+  done < <(grep -E '^[0-9]+ (icmp|mtu|http) ' "$file")
+}
+
 check_pairs() {
   echo ""
   echo "Checking ICMP, MTU $MTU and HTTP between pods"
-  local i j check result detail expected file pairs
-  local -A icmp_failed
+  local i pairs
   for_each_pod check_pairs_from
   for i in "${!POD_NAMES[@]}"; do
-    file="$(result_file check_pairs_from "$i")"
-    expected=$((${#POD_NAMES[@]} - 1))
-    if [ "$(grep -cE '^[0-9]+ (icmp ok|icmp fail|mtu ok|mtu fail|http ok|http fail|http wrong .*)$' "$file")" -ne $((expected * 3)) ]; then
-      echo "Checks did not complete from $(describe_pod "$i"):"
-      sed 's/^/  /' "$file"
-      FAILED=1
-      continue
-    fi
-    while read -r j check result detail; do
-      [ "$result" = "ok" ] && continue
-      case "$check $result" in
-        "icmp fail")
-          icmp_failed[$j]=1
-          echo "Ping failed: $(describe_pod "$i") <-> $(describe_pod "$j")"
-          ;;
-        "mtu fail")
-          if [ -z "${icmp_failed[$j]}" ]; then
-            echo "MTU $MTU ping failed, plain ping works: $(describe_pod "$i") <-> $(describe_pod "$j")"
-          fi
-          ;;
-        "http fail") echo "HTTP failed: $(describe_pod "$i") <-> $(describe_pod "$j")" ;;
-        "http wrong") echo "HTTP answered by '$detail', expected $(describe_pod "$j"): from $(describe_pod "$i")" ;;
-      esac
-      FAILED=1
-    done < <(grep -E '^[0-9]+ (icmp|mtu|http) ' "$file")
-    icmp_failed=()
+    report_pairs "$i"
   done
   pairs=$((${#POD_NAMES[@]} * (${#POD_NAMES[@]} - 1) / 2))
   echo "Checked $pairs pod pairs in both directions"
