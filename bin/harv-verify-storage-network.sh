@@ -296,30 +296,38 @@ check_pairs_from() {
   mapfile -t targets < <(pair_targets "$1")
   [ "${#targets[@]}" -gt 0 ] || return 0
   pod_exec "$1" sh -c '
+    probe_ping() (
+      index="$1" check="$2"
+      shift 2
+      if "$dir/ping" -c 2 -i 0.2 -W 1 -w 2 "$@" >/dev/null 2>&1; then
+        echo "$index $check ok"
+      else
+        echo "$index $check fail"
+      fi
+    )
+
+    probe_http() (
+      index="$1" ip="$2" name="$3"
+      if ! answer="$(curl -sf -m 1 "http://$ip:$port/ok")"; then
+        echo "$index http fail"
+        exit 0
+      fi
+      if [ "$answer" = "$name" ]; then
+        echo "$index http ok"
+        exit 0
+      fi
+      detail="$(printf "%s" "$answer" | head -c 100 | tr -c "[:alnum:]._-" "?")"
+      echo "$index http wrong $detail"
+    )
+
     dir="$1" port="$2" size="$3"
     shift 3
     for target in "$@"; do
       j="${target%%=*}" rest="${target#*=}"
       ip="${rest%%=*}" name="${rest#*=}"
-      if "$dir/ping" -c 2 -i 0.2 -W 1 -w 2 -t 4 "$ip" >/dev/null 2>&1; then
-        echo "$j icmp ok"
-      else
-        echo "$j icmp fail"
-      fi
-      if "$dir/ping" -c 2 -i 0.2 -W 1 -w 2 -M do -s "$size" -t 4 "$ip" >/dev/null 2>&1; then
-        echo "$j mtu ok"
-      else
-        echo "$j mtu fail"
-      fi
-      if answer="$(curl -sf -m 1 "http://$ip:$port/ok")"; then
-        if [ "$answer" = "$name" ]; then
-          echo "$j http ok"
-        else
-          echo "$j http wrong $(printf "%s" "$answer" | head -c 100 | tr -c "[:alnum:]._-" "?")"
-        fi
-      else
-        echo "$j http fail"
-      fi
+      probe_ping "$j" icmp -t 4 "$ip"
+      probe_ping "$j" mtu -M do -s "$size" -t 4 "$ip"
+      probe_http "$j" "$ip" "$name"
     done
   ' sh "${POD_DIRS[$1]}" "$WEBSERVER_PORT" "$((MTU - 28))" "${targets[@]}"
 }
