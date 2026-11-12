@@ -74,21 +74,36 @@ count_running() {
 # Output for each pod goes to $RESULTS_DIR/<function>.<index>.
 # Indexes of pods where the function failed are left in FAILED_PODS.
 for_each_pod() {
-  local fn="$1" i
+  local fn="$1" i signal_status=0
   local -a pids=()
   FAILED_PODS=()
+  trap 'signal_status=130' INT
+  trap 'signal_status=143' TERM
   for i in "${!POD_NAMES[@]}"; do
-    while [ "$(count_running "${pids[@]}")" -ge "$MAX_PARALLEL" ]; do
-      sleep 0.2
+    while [ "$signal_status" -eq 0 ] &&
+      [ "$(count_running "${pids[@]}")" -ge "$MAX_PARALLEL" ]; do
+      sleep 0.2 || true
     done
-    "$fn" "$i" >"$RESULTS_DIR/$fn.$i" 2>&1 &
+    [ "$signal_status" -eq 0 ] || break
+    (
+      trap '' INT TERM
+      "$fn" "$i"
+    ) >"$RESULTS_DIR/$fn.$i" 2>&1 &
     pids[i]=$!
   done
   for i in "${!pids[@]}"; do
-    if ! wait "${pids[$i]}"; then
-      FAILED_PODS+=("$i")
-    fi
+    # A trapped signal can interrupt wait before the worker has finished.
+    while ! wait "${pids[$i]}"; do
+      if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+        FAILED_PODS+=("$i")
+        break
+      fi
+    done
   done
+  trap - INT TERM
+  if [ "$signal_status" -ne 0 ]; then
+    exit "$signal_status"
+  fi
 }
 
 result_file() {
