@@ -486,103 +486,153 @@ for address in sys.argv[1:]:
 # agent (port + 2). During a rebuild, the other replicas of the volume connect to its sync
 # agent too. The file transfer ports above port + 2 only listen during a transfer, so they
 # are not checked.
-check_replica_endpoints() {
-  echo ""
-  echo "Checking engine and replica endpoints"
-  local kind volume engine_manager replica address replica_manager replica_ip replica_port
-  local engine_index replica_index ip port description i peer file result detail
-  local endpoints=0 skipped=0
-  local -A pod_index replicas_by_volume
-  local -a records
-  declare -gA TCP_TARGET_SEEN=()
-  TCP_TARGETS=()
-  for i in "${!POD_NAMES[@]}"; do
-    pod_index[${POD_NAMES[$i]}]="$i"
-  done
-  if ! get_replica_endpoints >"$RESULTS_DIR/endpoints" 2>"$RESULTS_DIR/endpoints.err"; then
-    echo "Could not read Longhorn engines and replicas:"
-    sed 's/^/  /' "$RESULTS_DIR/endpoints.err"
+load_endpoints() {
+  if get_replica_endpoints >"$RESULTS_DIR/endpoints" \
+    2>"$RESULTS_DIR/endpoints.err"; then
+    return 0
+  fi
+  echo "Could not read Longhorn engines and replicas:"
+  sed 's/^/  /' "$RESULTS_DIR/endpoints.err"
+  FAILED=1
+  return 1
+}
+
+check_replica_ip() {
+  local address="$1" manager="$2" index="$3" description="$4"
+  if [ -z "$index" ]; then
+    printf '%s: replica instance manager %s is not a running storage network pod\n' \
+      "$description" "$manager"
     FAILED=1
     return
   fi
-  mapfile -t records <"$RESULTS_DIR/endpoints"
+  if [ "${address%:*}" != "${POD_IPS[$index]}" ]; then
+    printf '%s: engine uses %s, but %s has storage IP %s\n' \
+      "$description" "$address" "$manager" "${POD_IPS[$index]}"
+    FAILED=1
+  fi
+}
+
+add_engine_targets() {
+  local index="$1" manager="$2" address="$3" description="$4"
+  local ip="${address%:*}" port="${address##*:}"
+  if [ -z "$index" ]; then
+    printf '%s: engine instance manager %s is not a running storage network pod\n' \
+      "$description" "$manager"
+    FAILED=1
+    return
+  fi
+  add_tcp_target "$index" "$address" "$description control port"
+  add_tcp_target "$index" "$ip:$((port + 1))" "$description data port"
+  add_tcp_target "$index" "$ip:$((port + 2))" "$description sync agent port"
+}
+
+queue_endpoint() {
+  local -n pod_map="$2" sync_map="$3"
+  local kind volume engine_manager replica address replica_manager replica_ip replica_port
+  local engine_index replica_index ip port description
+  IFS=$'\t' read -r kind volume engine_manager replica address \
+    replica_manager replica_ip replica_port <<<"$1"
+  ip="${address%:*}"
+  port="${address##*:}"
+  engine_index="${pod_map[$engine_manager]}"
+  replica_index="${pod_map[$replica_manager]}"
+  description="volume $volume replica $replica"
+  if [ -n "$replica_index" ]; then
+    description+=" on ${POD_NODES[$replica_index]}"
+  fi
+  check_replica_ip "$address" "$replica_manager" "$replica_index" "$description"
+  # Older Longhorn versions do not report the replica storage IP.
+  if [ "$replica_ip" != "-" ] && [ "$replica_ip:$replica_port" != "$address" ]; then
+    printf '%s: engine uses %s, but the replica reports %s:%s\n' \
+      "$description" "$address" "$replica_ip" "$replica_port"
+    FAILED=1
+  fi
+  if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+    echo "$description: engine uses unexpected address $address"
+    FAILED=1
+    return
+  fi
+  add_engine_targets "$engine_index" "$engine_manager" "$address" "$description"
+  sync_map[$volume]+="$replica_index=$ip:$((port + 2))=$description"$'\n'
+}
+
+add_sync_targets() {
+  local record peer index detail
+  local -a records
+  mapfile -t records < <(printf '%s' "$1")
+  for record in "${records[@]}"; do
+    index="${record%%=*}"
+    [ -n "$index" ] || continue
+    for peer in "${records[@]}"; do
+      [ "$record" = "$peer" ] && continue
+      detail="${peer#*=}"
+      add_tcp_target "$index" "${detail%%=*}" "${detail#*=} sync agent port"
+    done
+  done
+}
+
+report_tcp_results() {
+  local i="$1" file address result detail description
+  local pattern='^[^ ]+:[0-9]+ (ok|fail [A-Za-z]+)$'
+  [ -n "${TCP_TARGETS[$i]}" ] || return 0
+  file="$(result_file connect_tcp_targets "$i")"
+  if [ "$(grep -cE "$pattern" "$file")" -ne \
+    "$(printf '%s' "${TCP_TARGETS[$i]}" | grep -c '')" ]; then
+    echo "TCP checks did not complete from $(describe_pod "$i"):"
+    sed 's/^/  /' "$file"
+    FAILED=1
+    return
+  fi
+  while read -r address result detail; do
+    [ "$result" = "ok" ] && continue
+    description="$(printf '%s' "${TCP_TARGETS[$i]}" | awk -v a="$address" '
+      $1 == a { sub(/^[^ ]+ /, ""); print; exit }
+    ')"
+    printf 'TCP connect to %s failed (%s) from %s: %s\n' \
+      "$address" "$detail" "$(describe_pod "$i")" "$description"
+    FAILED=1
+  done < <(grep -E "$pattern" "$file")
+}
+
+build_tcp_targets() {
+  local i line volume endpoints=0 skipped=0
+  local -A pod_index replicas_by_volume
+  local -a records
+  for i in "${!POD_NAMES[@]}"; do
+    pod_index[${POD_NAMES[$i]}]="$i"
+  done
+  mapfile -t records <"$1"
   for line in "${records[@]}"; do
     [ -n "$line" ] || continue
-    IFS=$'\t' read -r kind volume engine_manager replica address replica_manager replica_ip replica_port <<<"$line"
-    if [ "$kind" = "skip" ]; then
+    if [[ "$line" == skip$'\t'* ]]; then
       skipped=$((skipped + 1))
       continue
     fi
     endpoints=$((endpoints + 1))
-    ip="${address%:*}"
-    port="${address##*:}"
-    engine_index="${pod_index[$engine_manager]}"
-    replica_index="${pod_index[$replica_manager]}"
-    description="volume $volume replica $replica"
-    if [ -z "$replica_index" ]; then
-      echo "$description: replica instance manager $replica_manager is not a running storage network pod"
-      FAILED=1
-    else
-      description+=" on ${POD_NODES[$replica_index]}"
-      if [ "$ip" != "${POD_IPS[$replica_index]}" ]; then
-        echo "$description: engine uses $address, but $replica_manager has storage IP ${POD_IPS[$replica_index]}"
-        FAILED=1
-      fi
-    fi
-    # Older Longhorn versions do not report the replica storage IP.
-    if [ "$replica_ip" != "-" ] && [ "$replica_ip:$replica_port" != "$address" ]; then
-      echo "$description: engine uses $address, but the replica reports $replica_ip:$replica_port"
-      FAILED=1
-    fi
-    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$description: engine uses unexpected address $address"
-      FAILED=1
-      continue
-    fi
-    if [ -z "$engine_index" ]; then
-      echo "$description: engine instance manager $engine_manager is not a running storage network pod"
-      FAILED=1
-    else
-      add_tcp_target "$engine_index" "$address" "$description control port"
-      add_tcp_target "$engine_index" "$ip:$((port + 1))" "$description data port"
-      add_tcp_target "$engine_index" "$ip:$((port + 2))" "$description sync agent port"
-    fi
-    replicas_by_volume[$volume]+="$replica_index=$ip:$((port + 2))=$description"$'\n'
+    queue_endpoint "$line" pod_index replicas_by_volume
   done
-  # Every replica of a volume must reach the sync agent of every other replica.
   for volume in "${!replicas_by_volume[@]}"; do
-    mapfile -t records < <(printf '%s' "${replicas_by_volume[$volume]}")
-    for i in "${records[@]}"; do
-      for peer in "${records[@]}"; do
-        [ "$i" = "$peer" ] && continue
-        replica_index="${i%%=*}"
-        [ -n "$replica_index" ] || continue
-        detail="${peer#*=}"
-        add_tcp_target "$replica_index" "${detail%%=*}" "${detail#*=} sync agent port"
-      done
-    done
+    add_sync_targets "${replicas_by_volume[$volume]}"
   done
   echo "Found $endpoints replica endpoints on running v1 engines"
   if [ "$skipped" -gt 0 ]; then
     echo "Skipped $skipped running engines that do not use the v1 data engine"
   fi
+}
 
+check_replica_endpoints() {
+  echo ""
+  echo "Checking engine and replica endpoints"
+  local i
+  declare -gA TCP_TARGET_SEEN=()
+  TCP_TARGETS=()
+  if ! load_endpoints; then
+    return
+  fi
+  build_tcp_targets "$RESULTS_DIR/endpoints"
   for_each_pod connect_tcp_targets
   for i in "${!POD_NAMES[@]}"; do
-    [ -n "${TCP_TARGETS[$i]}" ] || continue
-    file="$(result_file connect_tcp_targets "$i")"
-    if [ "$(grep -cE '^[^ ]+:[0-9]+ (ok|fail [A-Za-z]+)$' "$file")" -ne "$(printf '%s' "${TCP_TARGETS[$i]}" | grep -c '')" ]; then
-      echo "TCP checks did not complete from $(describe_pod "$i"):"
-      sed 's/^/  /' "$file"
-      FAILED=1
-      continue
-    fi
-    while read -r address result detail; do
-      [ "$result" = "ok" ] && continue
-      description="$(printf '%s' "${TCP_TARGETS[$i]}" | awk -v a="$address" '$1 == a {sub(/^[^ ]+ /, ""); print; exit}')"
-      echo "TCP connect to $address failed ($detail) from $(describe_pod "$i"): $description"
-      FAILED=1
-    done < <(grep -E '^[^ ]+:[0-9]+ (ok|fail [A-Za-z]+)$' "$file")
+    report_tcp_results "$i"
   done
 }
 
