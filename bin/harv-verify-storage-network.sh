@@ -195,31 +195,46 @@ drop_pods() {
 
 # A pod that fails setup is left out of the check. Pods that stopped since they were
 # listed, such as finished backing-image-data-source pods, are skipped without failing.
+read_pod_setup() {
+  local i="$1" output
+  output="$(cat "$(result_file setup_pod "$i")")"
+  POD_DIRS[i]="$(sed -n 's/^dir //p' <<<"$output")"
+  POD_MTUS[i]="$(awk '
+    { for (k = 1; k <= NF; k++) if ($k == "mtu") { print $(k + 1); exit } }
+  ' <<<"$output")"
+}
+
+handle_setup_failure() {
+  local i="$1" phase
+  if ! phase="$(kubectl get pod -n "$NAMESPACE" "${POD_NAMES[$i]}" \
+    --ignore-not-found -o jsonpath='{.status.phase}')"; then
+    phase="Running"
+  fi
+  if [ "$phase" != "Running" ]; then
+    echo "Skipping $(describe_pod "$i"): ${phase:-deleted} since it was listed"
+    return
+  fi
+  echo "Could not prepare $(describe_pod "$i"):"
+  sed 's/^/  /' "$(result_file setup_pod "$i")"
+  FAILED=1
+  cleanup_pod "$i" &>/dev/null ||
+    printf 'Cleanup failed on %s, remove %s manually\n' \
+      "$(describe_pod "$i")" "${POD_DIRS[$i]:-its work directory}"
+}
+
 prepare_pods() {
   echo ""
   echo "Preparing pods"
-  local i output phase
+  local i
   SETUP_STARTED=1
   for_each_pod setup_pod
   for i in "${!POD_NAMES[@]}"; do
-    output="$(cat "$(result_file setup_pod "$i")")"
-    POD_DIRS[i]="$(sed -n 's/^dir //p' <<<"$output")"
-    POD_MTUS[i]="$(awk '{for(k=1;k<=NF;k++) if($k=="mtu"){print $(k+1); exit}}' <<<"$output")"
+    read_pod_setup "$i"
   done
   local -a failed=("${FAILED_PODS[@]}")
   [ "${#failed[@]}" -gt 0 ] || return 0
   for i in "${failed[@]}"; do
-    if ! phase="$(kubectl get pod -n "$NAMESPACE" "${POD_NAMES[$i]}" --ignore-not-found -o jsonpath='{.status.phase}')"; then
-      phase="Running"
-    fi
-    if [ "$phase" != "Running" ]; then
-      echo "Skipping $(describe_pod "$i"): ${phase:-deleted} since it was listed"
-      continue
-    fi
-    echo "Could not prepare $(describe_pod "$i"):"
-    sed 's/^/  /' "$(result_file setup_pod "$i")"
-    FAILED=1
-    cleanup_pod "$i" &>/dev/null || echo "Cleanup failed on $(describe_pod "$i"), remove ${POD_DIRS[$i]:-its work directory} manually"
+    handle_setup_failure "$i"
   done
   drop_pods "${failed[@]}"
   rm -f "$RESULTS_DIR"/setup_pod.*
