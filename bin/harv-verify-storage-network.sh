@@ -8,7 +8,8 @@
 #
 # Environment overrides:
 #   MTU           storage network MTU to test; defaults to the MTU of lhnet1 in the pods
-#   MAX_PARALLEL  maximum concurrent kubectl exec calls (default 20)
+#   MAX_PARALLEL  maximum concurrent per-pod workers (default 20);
+#                 excludes the persistent HTTP server exec sessions
 #
 # Checks:
 #   - duplicate storage network IPs and MACs between the pods
